@@ -44,10 +44,11 @@ activations:
 data:
   benchmark: "extract_bench"
   benchmark_path: "data/extract-bench"
-  domains:                     # Empty list = all domains
-    - "hiring/resume"
-  max_documents: null          # null = all docs in selected domains; int caps it
-  pdf_extractor: "pymupdf"     # pymupdf | (future: docling, marker)
+  domains:                     # Sandbox: text-based PDFs only.
+    - "academic/research"      # Hiring/resume excluded: 5/7 are image-only PDFs
+                               # from Google Docs exports without text layers.
+  max_documents: null
+  pdf_extractor: "pymupdf"
 
 # ----------------------------------------------------------------------------
 # Extraction prompt
