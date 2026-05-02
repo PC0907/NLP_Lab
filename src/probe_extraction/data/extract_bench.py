@@ -211,10 +211,15 @@ class ExtractBench(Benchmark):
         return self.dataset_root / domain
 
     def _load_schema(self, domain: str) -> dict[str, Any]:
-        """Load and unwrap the schema for a given domain.
+        """Load the schema for a given domain.
 
-        ExtractBench schemas wrap the actual JSON Schema in a metadata object;
-        we extract `schema_definition` so downstream code sees a plain schema.
+        ExtractBench schemas come in two formats:
+          1. Wrapped: {"name": ..., "schema_definition": {...actual schema...}}
+             (e.g., hiring/resume)
+          2. Plain: {...JSON Schema directly...}
+             (e.g., academic/research)
+
+        We detect the format and return the inner JSON Schema in both cases.
         """
         domain_dir = self._domain_dir(domain)
         schema_files = list(domain_dir.glob(f"*{SCHEMA_SUFFIX}"))
@@ -232,14 +237,27 @@ class ExtractBench(Benchmark):
         with schema_files[0].open("r", encoding="utf-8") as f:
             raw = json.load(f)
 
-        if "schema_definition" not in raw:
+        # Format detection:
+        # - Wrapped form has 'schema_definition' as a top-level key.
+        # - Plain form has JSON Schema keys (type/properties) at top level.
+        if "schema_definition" in raw:
+            schema = raw["schema_definition"]
+        elif "type" in raw or "properties" in raw:
+            schema = raw
+        else:
             raise ValueError(
-                f"Schema file {schema_files[0]} missing 'schema_definition' key. "
+                f"Schema file {schema_files[0]} has unrecognized format. "
+                f"Expected either a 'schema_definition' wrapper or a plain "
+                f"JSON Schema with 'type'/'properties' at top level. "
                 f"Got top-level keys: {list(raw.keys())}"
             )
 
-        return raw["schema_definition"]
+        if not isinstance(schema, dict):
+            raise ValueError(
+                f"Schema in {schema_files[0]} is not a dict: {type(schema)}"
+            )
 
+        return schema
     def _discover_documents(self) -> list[tuple[str, Path, Path]]:
         """Find all (domain, pdf_path, gold_path) triples across selected domains.
 
