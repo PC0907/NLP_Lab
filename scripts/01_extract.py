@@ -319,29 +319,31 @@ def main() -> int:
     summary_path = extractions_dir / "_summary.json"
     write_summary(results, summary_path, total_elapsed)
 
+    # Recompute aggregates for the final log line. Single pass, no surprises.
+    n_total = len(results)
     n_success = sum(r.is_success for r in results)
+    n_no_text = sum(
+        1 for r in results
+        if r.parse_error is not None
+        and "document has no text" in r.parse_error
+    )
+    n_parse_failed = sum(
+        1 for r in results
+        if r.parse_error is not None
+        and "document has no text" not in r.parse_error
+    )
+
     logger.info("=" * 70)
     logger.info(
         "Done: %d/%d successful, %d parse-failed, %d skipped (no text). "
         "Total: %.1fs.",
-        n_success, len(results),
-        sum(r.parse_error is not None for r in results) - sum(
-            r.parse_error and "document has no text" in r.parse_error
-            for r in results
-        ),
-        sum(
-            r.parse_error is not None
-            and "document has no text" in (r.parse_error or "")
-            for r in results
-        ),
-        total_elapsed,
+        n_success, n_total, n_parse_failed, n_no_text, total_elapsed,
     )
     logger.info("Summary: %s", summary_path)
     logger.info("Extractions: %s", extractions_dir)
     logger.info("Activations: %s", activations_dir)
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
