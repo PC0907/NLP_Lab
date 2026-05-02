@@ -1,0 +1,109 @@
+# ============================================================================
+# Default configuration for probe-extraction pipeline.
+#
+# Override by passing a different YAML file via --config to any script:
+#   python scripts/01_extract.py --config configs/my_experiment.yaml
+#
+# Configs are loaded with deep-merge: any other YAML can specify only the
+# keys it wants to override; everything else falls back to defaults.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Experiment metadata
+# ----------------------------------------------------------------------------
+experiment:
+  name: "qwen25_7b_extract_bench_resumes"
+  seed: 42
+  artifacts_dir: "artifacts"   # All outputs land here. Per-stage subdirs created automatically.
+
+# ----------------------------------------------------------------------------
+# Model
+# ----------------------------------------------------------------------------
+model:
+  name: "Qwen/Qwen2.5-7B-Instruct"
+  dtype: "bfloat16"            # bfloat16 | float16 | float32
+  quantization: "4bit"         # 4bit | 8bit | none
+  device_map: "auto"
+  trust_remote_code: false
+  max_new_tokens: 2048         # Max tokens to generate per extraction
+  temperature: 0.0             # Greedy by default; baselines may override
+  top_p: 1.0
+
+# ----------------------------------------------------------------------------
+# Activation capture
+# ----------------------------------------------------------------------------
+activations:
+  layers: [12, 16, 20, 24]     # Which layers to extract hidden states from
+  position: "last_token"       # "last_token" | "mean" | "all"
+                               # Position within each field's value tokens
+  dtype: "float16"             # Storage dtype for saved activations
+
+# ----------------------------------------------------------------------------
+# Data / benchmark
+# ----------------------------------------------------------------------------
+data:
+  benchmark: "extract_bench"
+  benchmark_path: "data/extract-bench"
+  domains:                     # Empty list = all domains
+    - "hiring/resume"
+  max_documents: null          # null = all docs in selected domains; int caps it
+  pdf_extractor: "pymupdf"     # pymupdf | (future: docling, marker)
+
+# ----------------------------------------------------------------------------
+# Extraction prompt
+# ----------------------------------------------------------------------------
+extraction:
+  prompt_template: "default"   # Key into prompts.py
+  include_schema: true         # Send full schema to model
+  include_examples: false      # Few-shot examples (none for now)
+
+# ----------------------------------------------------------------------------
+# Labeling (gold matching)
+# ----------------------------------------------------------------------------
+labeling:
+  strategy: "strict"           # strict | semantic (semantic = future LLM judge)
+  string_match: "fuzzy"        # exact | fuzzy
+  fuzzy_threshold: 0.85        # Token-level Jaccard similarity threshold
+  number_tolerance: 0.01       # Relative tolerance for numeric fields
+  url_normalize: true          # Strip http/https, trailing slashes, lowercase
+  email_normalize: true        # Lowercase, strip markdown link wrappers
+
+# ----------------------------------------------------------------------------
+# Probe training
+# ----------------------------------------------------------------------------
+probe:
+  type: "logistic_regression"  # Future: mlp, attention_head
+  C: 1.0                       # Inverse regularization strength
+  max_iter: 1000
+  class_weight: "balanced"     # Handle class imbalance (errors usually rare)
+  test_size: 0.2
+  cv_folds: 5
+
+# ----------------------------------------------------------------------------
+# Baselines (for evaluation stage)
+# ----------------------------------------------------------------------------
+baselines:
+  enabled:
+    - "token_logprob"          # Mean log-prob of field's tokens
+    - "min_token_logprob"      # Min log-prob across field's tokens
+    # - "self_consistency"     # Resample N times, measure agreement (expensive)
+    # - "semantic_entropy"     # Future
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+
+# ----------------------------------------------------------------------------
+# Selective regeneration (stage 5)
+# ----------------------------------------------------------------------------
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"   # resample | focused_prompt | bigger_model
+  resample_temperature: 0.7
+  resample_samples: 3
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+logging:
+  level: "INFO"                # DEBUG | INFO | WARNING | ERROR
+  log_to_file: true
+  log_dir: "logs"
