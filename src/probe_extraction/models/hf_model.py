@@ -416,16 +416,27 @@ class HuggingFaceLLM(LLM):
             bfloat16 we cast through float32 first because numpy doesn't
             natively support bfloat16.
         """
-        if len(hidden_states_tuple) != 1 + num_generated:
+        # The hidden_states tuple length can be off-by-one from generated
+        # tokens because some configurations don't emit hidden states for
+        # the final step (when EOS is sampled). We accept this — the last
+        # token is typically EOS or a closing delimiter (}), neither of
+        # which we'd train a probe on anyway.
+        n_steps = len(hidden_states_tuple) - 1  # subtract step 0 (prompt)
+        if n_steps < num_generated:
+            logger.debug(
+                "Hidden states cover %d of %d generated tokens "
+                "(last %d token(s) have no hidden states; usually EOS).",
+                n_steps, num_generated, num_generated - n_steps,
+            )
+        elif n_steps > num_generated:
             logger.warning(
-                "Unexpected hidden_states length: got %d, expected %d. "
-                "Truncating to min.",
-                len(hidden_states_tuple), 1 + num_generated,
+                "Hidden states (%d) exceed generated tokens (%d); truncating.",
+                n_steps, num_generated,
             )
 
-        # Skip step 0 (prompt forward pass). Take only generated steps.
-        # Defensive truncation in case the lengths disagree.
-        gen_steps = hidden_states_tuple[1 : 1 + num_generated]
+        # Take only generated steps. Defensive truncation in case lengths
+        # disagree (in either direction).
+        gen_steps = hidden_states_tuple[1:1 + num_generated]
 
         result: dict[int, np.ndarray] = {}
         for ℓ in layers:

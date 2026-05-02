@@ -316,15 +316,35 @@ class Extractor:
 
             per_layer_vec: dict[int, np.ndarray] = {}
             for ℓ, layer_array in hidden_states.items():
-                # layer_array shape: (num_generated, hidden_dim)
-                if layer_array.shape[0] != num_generated:
-                    logger.warning(
-                        "Layer %d activation length mismatch: got %d, "
-                        "expected %d. Skipping field %s.",
-                        ℓ, layer_array.shape[0], num_generated, loc.path,
+                # layer_array shape: (n_steps_with_activations, hidden_dim).
+                # n_steps_with_activations may be slightly smaller than
+                # num_generated when the final step (EOS) has no hidden
+                # state. We handle this by clamping the field's token span
+                # to within the available activations rather than skipping.
+                n_avail = layer_array.shape[0]
+                clamped_start = min(start, n_avail - 1) if n_avail > 0 else 0
+                clamped_end = min(end, n_avail)
+
+                if clamped_end <= clamped_start:
+                    logger.debug(
+                        "Layer %d: field %s span [%d,%d) outside available "
+                        "activations [0,%d); skipping this layer.",
+                        ℓ, loc.path, start, end, n_avail,
                     )
                     continue
 
+                span = layer_array[clamped_start:clamped_end]
+                if span.size == 0:
+                    continue
+
+                if self.position == "last_token":
+                    vec = span[-1]
+                elif self.position == "mean":
+                    vec = span.astype(np.float32).mean(axis=0).astype(np.float16)
+                else:
+                    raise AssertionError(f"Unhandled position: {self.position}")
+
+                per_layer_vec[ℓ] = vec
                 span = layer_array[start:end]  # (span_len, hidden_dim)
                 if span.size == 0:
                     continue
