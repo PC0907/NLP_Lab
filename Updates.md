@@ -162,38 +162,3 @@ All four probes outperform chance. Across-layer differences are smaller than cro
 | Probe (layer 24, CV) | 0.754 ± 0.167 | — |
 
 **Best probe (layer 12) beats best baseline (min logprob) by 0.08 AUROC.**
-
----
-
-## Honest interpretation
-
-### Can claim
-
-- Pipeline runs end-to-end on real data.
-- Linear probes on Qwen2.5-7B residual stream activations carry signal about per-field extraction correctness.
-- Probes outperform token log-probability baselines on the sandbox dataset.
-- The advantage is consistent across all four captured layers.
-- Token log-probability baselines themselves are non-trivial (~0.70 AUROC) — the bar for "probes are useful" is meaningfully higher than chance.
-
-### Cannot claim (yet)
-
-- Probes are statistically significantly better than baselines (confidence intervals overlap).
-- Any layer is preferable to any other (within-noise differences).
-- The result will hold at scale or across domains.
-- Probe-guided selective regeneration improves cost-quality tradeoffs (Stage 5 not yet built — and this is the actual research question).
-
-### What's needed for stronger claims
-
-- **Stage 5: selective regeneration.** Use probe scores to drive thresholded regeneration. Compare Pareto curves (accuracy vs. compute) for probe-guided, baseline-guided, and uniform regeneration. This is where the project's contribution actually lives. Without it, we have "probes have higher AUROC than logprobs" — interesting but not the project's stated goal.
-- **Scale.** 103 fields with 16 errors is sandbox-sized. Confidence intervals tighten roughly as 1/√N. Need either full ExtractBench (35 docs) or additional benchmarks (CORD, SciREX) for statistically meaningful conclusions.
-- **Better compute.** P100 limits truncation length severely. A100 with FlashAttention would let us use full document context.
-
----
-
-## Current state
-
-- **Lines of code:** ~3,000 across ~35 source files
-- **Tests:** 111 unit/integration tests passing
-- **Pipeline:** Runnable end-to-end with `python scripts/0X_*.py --config configs/default.yaml`
-
-### Repository structure
