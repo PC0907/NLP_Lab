@@ -452,7 +452,7 @@ class TestRealisticAcademic:
             gold=gold, extracted=gold,
         )
         assert result.n_errors == 0
-        assert result.n_total == 4
+        assert result.n_total == 5
 
     def test_mixed_outcome(self) -> None:
         gold = {

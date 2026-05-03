@@ -275,14 +275,39 @@ class Matcher:
             return
 
         # Gold is dict, extracted isn't (or vice versa)
+        # Gold is dict, extracted isn't (or vice versa)
         if isinstance(gold, dict) or isinstance(extracted, dict):
-            # Only flag as error if at least one side has actual content.
-            if _has_content(gold) or _has_content(extracted):
-                self._emit_type_mismatch(
-                    path=path, gold=gold, extracted=extracted, labels=labels,
+            # If the missing side is None/empty, this is a structural omission
+            # or hallucination. Recurse into the present side to emit per-leaf
+            # labels so each field of the sub-object gets a label rather than
+            # collapsing into a single "type_mismatch" at the array index.
+            if gold is None or (isinstance(gold, dict) and len(gold) == 0):
+                self._walk(
+                    schema=sub_schema,
+                    gold=_make_empty_like(extracted),
+                    extracted=extracted,
+                    path=path,
+                    labels=labels,
+                    unmatched_gold=unmatched_gold,
+                    unmatched_extracted=unmatched_extracted,
                 )
+                return
+            if extracted is None or (isinstance(extracted, dict) and len(extracted) == 0):
+                self._walk(
+                    schema=sub_schema,
+                    gold=gold,
+                    extracted=_make_empty_like(gold),
+                    path=path,
+                    labels=labels,
+                    unmatched_gold=unmatched_gold,
+                    unmatched_extracted=unmatched_extracted,
+                )
+                return
+            # Both present but types disagree → genuine type mismatch.
+            self._emit_type_mismatch(
+                path=path, gold=gold, extracted=extracted, labels=labels,
+            )
             return
-
         # ------ Both lists ------
         if isinstance(gold, list) and isinstance(extracted, list):
             self._handle_list_pair(
@@ -297,13 +322,38 @@ class Matcher:
             return
 
         # Gold is list, extracted isn't (or vice versa)
+        # Gold is list, extracted isn't (or vice versa)
         if isinstance(gold, list) or isinstance(extracted, list):
-            if _has_content(gold) or _has_content(extracted):
-                self._emit_type_mismatch(
-                    path=path, gold=gold, extracted=extracted, labels=labels,
+            # Same structural treatment as for dicts above: if the other side
+            # is None/empty, recurse with an empty list as the substitute so
+            # we emit per-element labels.
+            if gold is None or (isinstance(gold, list) and len(gold) == 0):
+                self._walk(
+                    schema=sub_schema,
+                    gold=[],
+                    extracted=extracted,
+                    path=path,
+                    labels=labels,
+                    unmatched_gold=unmatched_gold,
+                    unmatched_extracted=unmatched_extracted,
                 )
+                return
+            if extracted is None or (isinstance(extracted, list) and len(extracted) == 0):
+                self._walk(
+                    schema=sub_schema,
+                    gold=gold,
+                    extracted=[],
+                    path=path,
+                    labels=labels,
+                    unmatched_gold=unmatched_gold,
+                    unmatched_extracted=unmatched_extracted,
+                )
+                return
+            self._emit_type_mismatch(
+                path=path, gold=gold, extracted=extracted, labels=labels,
+            )
             return
-
+        
         # ------ Leaf comparison ------
         self._emit_leaf_label(
             schema=sub_schema,
@@ -531,6 +581,19 @@ def _has_content(v: Any) -> bool:
         return False
     return True
 
+def _make_empty_like(template: Any) -> Any:
+    """Return an empty container matching the type of `template`.
+
+    Used when one side of the comparison is missing a sub-object — we
+    substitute an empty placeholder of the matching type so the recursion
+    can produce per-leaf labels rather than collapsing into a structural
+    type_mismatch.
+    """
+    if isinstance(template, dict):
+        return {}
+    if isinstance(template, list):
+        return []
+    return None
 
 def _path_to_string(path: list[str | int]) -> str:
     """Same convention as the extractor uses."""
