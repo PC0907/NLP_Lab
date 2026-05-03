@@ -356,7 +356,8 @@ class HuggingFaceLLM(LLM):
                 num_generated=len(generated_ids),
             )
 
-        return GenerationOutput(
+        # Build the result first so we can free GPU tensors before returning.
+        result = GenerationOutput(
             text=text,
             prompt_token_ids=prompt_ids,
             generated_token_ids=generated_ids,
@@ -365,6 +366,17 @@ class HuggingFaceLLM(LLM):
             finish_reason=finish_reason,
             metadata={"prompt_len": prompt_len},
         )
+
+        # Free GPU memory between generations. Without this, hidden-state
+        # tensors and KV cache from the previous call linger in PyTorch's
+        # allocator, and the next call OOMs even when the current call's
+        # working set would fit. This is the difference between processing
+        # 1 doc and processing many.
+        del outputs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return result
 
     # ------------------------------------------------------------------------
     # Internal: extracting per-token logprobs
