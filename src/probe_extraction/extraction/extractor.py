@@ -196,7 +196,7 @@ class Extractor:
         abstract, venue) lives in the first 1-2 pages, so head-truncation
         is essentially lossless for our schema.
         """
-        max_input_chars = 40_000  # ~11k tokens, conservative
+        max_input_chars = 15_000  # ~11k tokens, conservative
         if len(text) <= max_input_chars:
             return text
 
