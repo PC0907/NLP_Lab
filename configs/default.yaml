@@ -1,26 +1,10 @@
-# ============================================================================
-# Default configuration for probe-extraction pipeline.
-#
-# Override by passing a different YAML file via --config to any script:
-#   python scripts/01_extract.py --config configs/my_experiment.yaml
-#
-# Configs are loaded with deep-merge: any other YAML can specify only the
-# keys it wants to override; everything else falls back to defaults.
-# ============================================================================
-
-# ----------------------------------------------------------------------------
-# Experiment metadata
-# ----------------------------------------------------------------------------
 experiment:
-  name: "qwen25_7b_extract_bench_resumes"
+  name: "qwen35_4b_extract_bench_resumes"
   seed: 42
   artifacts_dir: "artifacts"   # All outputs land here. Per-stage subdirs created automatically.
 
-# ----------------------------------------------------------------------------
-# Model
-# ----------------------------------------------------------------------------
 model:
-  name: "Qwen/Qwen2.5-7B-Instruct"
+  name: "Qwen/Qwen3.5-4B"
   dtype: "bfloat16"            # bfloat16 | float16 | float32
   quantization: "4bit"         # 4bit | 8bit | none
   device_map: "auto"
