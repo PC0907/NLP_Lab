@@ -1,4 +1,4 @@
-# Project Progress — Days 1-2
+# Project Progress 
 
 **Project:** Probe-based trust signals for structured information extraction
 
