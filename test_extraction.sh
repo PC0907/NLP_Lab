@@ -21,4 +21,4 @@ python -c "from probe_extraction.config import load_config; print('import OK')"
 
 cd ~/NLP_Lab
 nvidia-smi
-python scripts/01_extract.py --config configs/exp_qwen35_4b_pymupdf.yaml --limit 1
+python scripts/01_extract.py --config configs/exp_qwen35_4b_pymupdf.yaml 

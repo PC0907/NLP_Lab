@@ -314,12 +314,25 @@ class HuggingFaceLLM(LLM):
 
         # ------ Generation kwargs ------
         do_sample = temperature > 0.0
+        
+        # Build EOS list: include the standard eos_token_id PLUS the chat's
+        # end-of-turn marker if it exists. Qwen3+ models emit <|im_end|>
+        # to signal turn completion; without this, we'd generate junk after.
+        eos_ids = []
+        if self.tokenizer.eos_token_id is not None:
+            eos_ids.append(self.tokenizer.eos_token_id)
+        im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        if im_end_id is not None and im_end_id != self.tokenizer.unk_token_id:
+            if im_end_id not in eos_ids:
+                eos_ids.append(im_end_id)
+        
         gen_kwargs: dict[str, Any] = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "max_new_tokens": max_new_tokens,
             "do_sample": do_sample,
             "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": eos_ids if eos_ids else None,
             "return_dict_in_generate": True,
         }
         if do_sample:
@@ -345,9 +358,8 @@ class HuggingFaceLLM(LLM):
 
         # ------ Determine finish reason ------
         finish_reason = "length"
-        if generated_ids and generated_ids[-1] == self.tokenizer.eos_token_id:
+        if generated_ids and generated_ids[-1] in eos_ids:
             finish_reason = "stop"
-
         # ------ Decode generated text ------
         text = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
