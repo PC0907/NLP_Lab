@@ -108,21 +108,24 @@ class ParseResult:
 # ============================================================================
 
 def parse_json_output(generated_text: str) -> tuple[dict[str, Any] | None, str | None, str]:
-    """Parse the model's generated text as JSON, with light recovery.
-
-    Returns:
-        (parsed_json, error_message, json_text)
-        - parsed_json is None on failure.
-        - error_message is None on success.
-        - json_text is the substring we attempted to parse (possibly equal
-          to the input, or trimmed if we stripped fences/preamble).
-    """
+    """Parse model output as JSON with defensive type handling."""
+    if generated_text is None:
+        return None, "model produced no text (None)", ""
+    
     candidate = _strip_to_json(generated_text)
+    
+    if candidate is None or not isinstance(candidate, str):
+        return None, f"strip_to_json returned non-string: {type(candidate).__name__}", ""
+    
+    if not candidate.strip():
+        return None, "no JSON content found in output", candidate
+    
     try:
         return json.loads(candidate), None, candidate
     except json.JSONDecodeError as e:
         return None, f"JSONDecodeError: {e}", candidate
-
+    except (TypeError, ValueError) as e:
+        return None, f"{type(e).__name__}: {e}", candidate
 
 def locate_fields(
     *,
@@ -222,14 +225,23 @@ def _strip_to_json(text: str) -> str:
     """
     text = text.strip()
 
-    # 0: Strip any <think>...</think> blocks. With enable_thinking=False
-    # these shouldn't appear, but the model occasionally emits stray ones.
-    # Defensive removal so they don't pollute JSON parsing.
+    # 0: Strip any <think>...</think> blocks
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
     # 1 & 2: fenced code block
     m = _FENCE_RE.search(text)
+    if m:
+        return m.group(1).strip()
 
+    # 3: brace-counted extraction
+    first_brace = text.find("{")
+    if first_brace >= 0:
+        extracted = _extract_balanced_braces(text, first_brace)
+        if extracted is not None:
+            return extracted
+
+    # 4: fall through
+    return text
 def _extract_balanced_braces(text: str, start: int) -> str | None:
     """Return the substring from `start` through the matching closing brace.
 
