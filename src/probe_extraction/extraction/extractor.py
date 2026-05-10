@@ -248,6 +248,13 @@ class Extractor:
         )
 
         # ------ Parse JSON ------
+        # ------ DEBUG: see what the model actually produced ------
+        logger.info("=== RAW GENERATED TEXT (first 2000 chars) ===")
+        logger.info(repr(gen_output.text[:2000] if gen_output.text else gen_output.text))
+        logger.info("=== END RAW TEXT ===")
+        logger.info("Generated token IDs (first 20): %s", gen_output.generated_token_ids[:20])
+        logger.info("Total generated tokens: %d", len(gen_output.generated_token_ids))
+        
         parsed_json, parse_error, json_text = parse_json_output(gen_output.text)
         if parsed_json is None:
             logger.warning(
