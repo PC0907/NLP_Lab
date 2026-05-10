@@ -214,6 +214,7 @@ def _strip_to_json(text: str) -> str:
     """Best-effort extraction of a JSON object from raw model output.
 
     Handles, in priority order:
+      0. Strips any <think>...</think> reasoning blocks (Qwen3+ thinking mode).
       1. ```json ... ``` fenced blocks.
       2. ``` ... ``` fenced blocks (no language tag).
       3. The first '{' to the matching closing '}', with brace-counting.
@@ -221,20 +222,13 @@ def _strip_to_json(text: str) -> str:
     """
     text = text.strip()
 
+    # 0: Strip any <think>...</think> blocks. With enable_thinking=False
+    # these shouldn't appear, but the model occasionally emits stray ones.
+    # Defensive removal so they don't pollute JSON parsing.
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     # 1 & 2: fenced code block
     m = _FENCE_RE.search(text)
-    if m:
-        return m.group(1).strip()
-
-    # 3: brace-counted extraction
-    first_brace = text.find("{")
-    if first_brace >= 0:
-        extracted = _extract_balanced_braces(text, first_brace)
-        if extracted is not None:
-            return extracted
-
-    return text
-
 
 def _extract_balanced_braces(text: str, start: int) -> str | None:
     """Return the substring from `start` through the matching closing brace.

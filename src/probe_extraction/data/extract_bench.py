@@ -91,12 +91,13 @@ class ExtractBench(Benchmark):
         domains: list[str] | None = None,
         max_documents: int | None = None,
         pdf_min_chars: int = 50,
+        pdf_backend: str = "pymupdf",
     ) -> None:
         self.benchmark_path = Path(benchmark_path)
         self.dataset_root = self.benchmark_path / DATASET_SUBDIR
         self.max_documents = max_documents
         self.pdf_min_chars = pdf_min_chars
-
+        self.pdf_backend = pdf_backend
         if not self.dataset_root.exists():
             raise FileNotFoundError(
                 f"ExtractBench dataset directory not found: {self.dataset_root}. "
@@ -329,7 +330,11 @@ class ExtractBench(Benchmark):
         text = ""
         extraction_error: str | None = None
         try:
-            text = extract_text(pdf_path, min_chars=self.pdf_min_chars)
+            text = extract_text(
+                pdf_path,
+                min_chars=self.pdf_min_chars,
+                backend=self.pdf_backend,
+            )        
         except (PDFExtractionError, FileNotFoundError) as e:
             extraction_error = str(e)
             logger.warning(

@@ -91,7 +91,8 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
             benchmark_path=cfg.benchmark_path,
             domains=cfg.data.domains or None,
             max_documents=max_docs,
-        )
+            pdf_backend=cfg.data.pdf_extractor,
+        )    
     raise ValueError(f"Unknown benchmark: {cfg.data.benchmark!r}")
 
 

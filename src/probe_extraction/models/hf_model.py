@@ -217,12 +217,24 @@ class HuggingFaceLLM(LLM):
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": user_message})
 
-        return self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,  # appends the assistant header so the
-                                         # model knows to start generating
-        )
+        # apply_chat_template accepts model-specific kwargs; for Qwen3.5
+        # `enable_thinking=False` disables the <think>...</think> mode and
+        # produces a direct response. Older models (Qwen2.5, Llama) ignore
+        # unknown kwargs, so this is safe to pass unconditionally.
+        try:
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            # Some older tokenizers raise on unknown kwargs. Fall back.
+            return self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
 
     # ------------------------------------------------------------------------
     # LLM interface: generation

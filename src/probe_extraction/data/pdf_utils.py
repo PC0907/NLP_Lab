@@ -18,6 +18,8 @@ import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
+# Docling is heavy (downloads neural models on first use) — import lazily.
+_docling_converter = None
 
 # ============================================================================
 # Custom exception
@@ -36,29 +38,48 @@ def extract_text(
     *,
     page_separator: str = "\n\n",
     min_chars: int = 50,
+    backend: str = "pymupdf",
 ) -> str:
     """Extract text from a PDF file.
 
     Args:
         pdf_path: Path to the PDF file.
-        page_separator: String inserted between pages. Default is a blank
-            line, which preserves rough page boundaries without being noisy.
-        min_chars: If the extracted text has fewer characters than this,
-            raise PDFExtractionError. PDFs that are image-only or corrupt
-            often "succeed" with a few stray characters; this catches them.
+        page_separator: String inserted between pages (PyMuPDF only;
+            Docling produces a single Markdown stream).
+        min_chars: Minimum characters of extracted text required.
+        backend: "pymupdf" (fast, layout-naive) or "docling" (slower,
+            layout-aware, better for tables and complex documents).
 
     Returns:
-        The full extracted text, with pages joined by `page_separator`.
+        The full extracted text.
 
     Raises:
         FileNotFoundError: If the PDF path doesn't exist.
-        PDFExtractionError: If the PDF can't be opened, or the extracted
-            text is shorter than `min_chars`.
+        PDFExtractionError: If extraction fails or yields too little text.
     """
     pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
+    if backend == "pymupdf":
+        text = _extract_text_pymupdf(pdf_path, page_separator)
+    elif backend == "docling":
+        text = _extract_text_docling(pdf_path)
+    else:
+        raise ValueError(f"Unknown PDF extraction backend: {backend!r}")
+
+    if len(text) < min_chars:
+        raise PDFExtractionError(
+            f"PDF {pdf_path.name} yielded only {len(text)} chars of text "
+            f"(min: {min_chars}, backend: {backend}). "
+            f"Possibly image-only or corrupt."
+        )
+
+    return text
+
+
+def _extract_text_pymupdf(pdf_path: Path, page_separator: str) -> str:
+    """PyMuPDF backend: fast, plain-text per page, joined with separator."""
     try:
         doc = fitz.open(pdf_path)
     except Exception as e:
@@ -68,7 +89,7 @@ def extract_text(
         pages: list[str] = []
         for page_num, page in enumerate(doc):
             try:
-                page_text = page.get_text("text")  # plain-text mode
+                page_text = page.get_text("text")
             except Exception as e:
                 logger.warning(
                     "Failed to extract page %d of %s: %s",
@@ -76,19 +97,37 @@ def extract_text(
                 )
                 page_text = ""
             pages.append(page_text)
-
-        full_text = page_separator.join(pages).strip()
+        return page_separator.join(pages).strip()
     finally:
         doc.close()
 
-    if len(full_text) < min_chars:
+
+def _extract_text_docling(pdf_path: Path) -> str:
+    """Docling backend: layout-aware, exports to Markdown.
+
+    Lazy-loads the DocumentConverter on first use. First call downloads
+    neural layout/table-structure models (~hundreds of MB), so it's slow.
+    Subsequent calls reuse the loaded converter.
+    """
+    global _docling_converter
+    if _docling_converter is None:
+        try:
+            from docling.document_converter import DocumentConverter
+        except ImportError as e:
+            raise PDFExtractionError(
+                "Docling not installed. Add `docling` to requirements.txt "
+                "or `pip install docling`."
+            ) from e
+        logger.info("Initializing Docling converter (downloads models on first use)...")
+        _docling_converter = DocumentConverter()
+
+    try:
+        result = _docling_converter.convert(str(pdf_path))
+        return result.document.export_to_markdown().strip()
+    except Exception as e:
         raise PDFExtractionError(
-            f"PDF {pdf_path.name} yielded only {len(full_text)} chars of text "
-            f"(min: {min_chars}). Possibly image-only or corrupt."
-        )
-
-    return full_text
-
+            f"Docling failed on {pdf_path.name}: {e}"
+        ) from e
 
 # ============================================================================
 # Metadata helper (used by loaders to populate Document.metadata)

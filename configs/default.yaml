@@ -1,5 +1,5 @@
 experiment:
-  name: "qwen35_4b_extract_bench_resumes"
+  name: "qwen35_4b_extract_bench_research"
   seed: 42
   artifacts_dir: "artifacts"   # All outputs land here. Per-stage subdirs created automatically.
 
@@ -17,9 +17,9 @@ model:
 # Activation capture
 # ----------------------------------------------------------------------------
 activations:
-  layers: [12, 16, 20, 24]     # Which layers to extract hidden states from
-  position: "last_token"       # "last_token" | "mean" | "all"
-                               # Position within each field's value tokens
+  layers: [14, 18, 22, 26]   # Qwen3.5-4B has 32 layers; same proportions as before
+                             # (was [12, 16, 20, 24] for 28-layer Qwen2.5-7B)
+  position: "last_token"
   dtype: "float16"             # Storage dtype for saved activations
 
 # ----------------------------------------------------------------------------
@@ -32,7 +32,6 @@ data:
     - "academic/research"      # Hiring/resume excluded: 5/7 are image-only PDFs
                                # from Google Docs exports without text layers.
   max_documents: null
-  pdf_extractor: "pymupdf"
 
 # ----------------------------------------------------------------------------
 # Extraction prompt

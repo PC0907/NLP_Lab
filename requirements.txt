@@ -10,7 +10,7 @@ scipy>=1.13.0
 pandas>=2.2.0
 scikit-learn>=1.5.0
 
-pymupdf>=1.24.0
+docling>=2.93.0
 
 pydantic>=2.9.0
 pyyaml>=6.0.2
