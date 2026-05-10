@@ -68,6 +68,7 @@ class ExtractionConfig(BaseModel):
     prompt_template: str = "default"
     include_schema: bool = True
     include_examples: bool = False
+    max_input_chars: int = 0
 
 
 class LabelingConfig(BaseModel):
@@ -142,9 +143,9 @@ class Config(BaseModel):
 
     @property
     def artifacts_path(self) -> Path:
-        """Resolved Path object for the artifacts directory."""
-        return Path(self.experiment.artifacts_dir)
-
+        """Per-experiment artifacts directory: {artifacts_dir}/{experiment.name}/"""
+        return Path(self.experiment.artifacts_dir) / self.experiment.name
+    
     @property
     def benchmark_path(self) -> Path:
         """Resolved Path object for the benchmark dataset."""

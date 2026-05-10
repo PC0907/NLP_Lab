@@ -278,6 +278,7 @@ def main() -> int:
         temperature=cfg.model.temperature,
         top_p=cfg.model.top_p,
         include_schema=cfg.extraction.include_schema,
+        max_input_chars=cfg.extraction.max_input_chars,
     )
 
     if args.dry_run:

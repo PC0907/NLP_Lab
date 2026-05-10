@@ -1,93 +1,67 @@
 experiment:
-  name: "qwen35_4b_extract_bench_research"
+  name: "qwen35_4b_pymupdf"
   seed: 42
-  artifacts_dir: "artifacts"   # All outputs land here. Per-stage subdirs created automatically.
+  artifacts_dir: "artifacts"
 
 model:
   name: "Qwen/Qwen3.5-4B"
-  dtype: "bfloat16"            # bfloat16 | float16 | float32
-  quantization: "4bit"         # 4bit | 8bit | none
+  dtype: "bfloat16"
+  quantization: "none"        # A40/A100 fits 4B model in bf16 trivially
   device_map: "auto"
-  trust_remote_code: false
-  max_new_tokens: 2048         # Max tokens to generate per extraction
-  temperature: 0.0             # Greedy by default; baselines may override
+  trust_remote_code: true     # Qwen3.5 is new architecture (qwen3_5)
+  max_new_tokens: 4096        # Up from 2048 — surveys can produce more
+  temperature: 0.0
   top_p: 1.0
 
-# ----------------------------------------------------------------------------
-# Activation capture
-# ----------------------------------------------------------------------------
 activations:
-  layers: [14, 18, 22, 26]   # Qwen3.5-4B has 32 layers; same proportions as before
-                             # (was [12, 16, 20, 24] for 28-layer Qwen2.5-7B)
+  layers: [0, 4, 8, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 31]
   position: "last_token"
-  dtype: "float16"             # Storage dtype for saved activations
+  dtype: "float16"
 
-# ----------------------------------------------------------------------------
-# Data / benchmark
-# ----------------------------------------------------------------------------
 data:
   benchmark: "extract_bench"
   benchmark_path: "data/extract-bench"
-  domains:                     # Sandbox: text-based PDFs only.
-    - "academic/research"      # Hiring/resume excluded: 5/7 are image-only PDFs
-                               # from Google Docs exports without text layers.
+  domains:
+    - "academic/research"
   max_documents: null
+  pdf_extractor: "pymupdf"
 
-# ----------------------------------------------------------------------------
-# Extraction prompt
-# ----------------------------------------------------------------------------
 extraction:
-  prompt_template: "default"   # Key into prompts.py
-  include_schema: true         # Send full schema to model
-  include_examples: false      # Few-shot examples (none for now)
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 0          # 0 = no truncation; A40/A100 + FlashAttention
 
-# ----------------------------------------------------------------------------
-# Labeling (gold matching)
-# ----------------------------------------------------------------------------
 labeling:
-  strategy: "strict"           # strict | semantic (semantic = future LLM judge)
-  string_match: "fuzzy"        # exact | fuzzy
-  fuzzy_threshold: 0.85        # Token-level Jaccard similarity threshold
-  number_tolerance: 0.01       # Relative tolerance for numeric fields
-  url_normalize: true          # Strip http/https, trailing slashes, lowercase
-  email_normalize: true        # Lowercase, strip markdown link wrappers
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
 
-# ----------------------------------------------------------------------------
-# Probe training
-# ----------------------------------------------------------------------------
 probe:
-  type: "logistic_regression"  # Future: mlp, attention_head
-  C: 1.0                       # Inverse regularization strength
+  type: "logistic_regression"
+  C: 1.0
   max_iter: 1000
-  class_weight: "balanced"     # Handle class imbalance (errors usually rare)
+  class_weight: "balanced"
   test_size: 0.2
   cv_folds: 5
 
-# ----------------------------------------------------------------------------
-# Baselines (for evaluation stage)
-# ----------------------------------------------------------------------------
 baselines:
   enabled:
-    - "token_logprob"          # Mean log-prob of field's tokens
-    - "min_token_logprob"      # Min log-prob across field's tokens
-    # - "self_consistency"     # Resample N times, measure agreement (expensive)
-    # - "semantic_entropy"     # Future
+    - "token_logprob"
+    - "min_token_logprob"
   self_consistency_samples: 5
   self_consistency_temperature: 0.7
 
-# ----------------------------------------------------------------------------
-# Selective regeneration (stage 5)
-# ----------------------------------------------------------------------------
 selective_regen:
   thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-  regeneration_strategy: "resample"   # resample | focused_prompt | bigger_model
+  regeneration_strategy: "resample"
   resample_temperature: 0.7
   resample_samples: 3
 
-# ----------------------------------------------------------------------------
-# Logging
-# ----------------------------------------------------------------------------
 logging:
-  level: "INFO"                # DEBUG | INFO | WARNING | ERROR
+  level: "INFO"
   log_to_file: true
   log_dir: "logs"

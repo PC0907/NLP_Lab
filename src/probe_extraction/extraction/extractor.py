@@ -146,6 +146,7 @@ class Extractor:
         temperature: float = 0.0,
         top_p: float = 1.0,
         include_schema: bool = True,
+        max_input_chars: int = 0,
     ) -> None:
         if position not in self.SUPPORTED_POSITIONS:
             raise ValueError(
@@ -160,6 +161,7 @@ class Extractor:
         self.temperature = temperature
         self.top_p = top_p
         self.include_schema = include_schema
+        self.max_input_chars = max_input_chars
 
         # Sanity-check requested layers against the model up-front so we fail
         # before the first expensive forward pass.
@@ -175,32 +177,10 @@ class Extractor:
     # ------------------------------------------------------------------------
     #Only necessary because of CUDA OOM Error. Can comment this out, with more computation
     def _truncate_document_text(self, text: str) -> str:
-        """Truncate document text to fit within the model's effective context.
-
-        Caps raw character count to leave room in the prompt for:
-          - The schema embedded in the prompt (~2k tokens for academic/research)
-          - Prompt scaffolding (system message, instructions, ~200 tokens)
-          - The max_new_tokens output budget
-          - Activation memory overhead at long sequence lengths
-
-        Conservative chars-to-tokens ratio: ~3.5 chars per token for English
-        prose. We cap at 40k chars (~11k tokens) which has been observed to
-        fit on a 16 GB GPU with our 4-bit Qwen2.5-7B + 4-layer activation
-        capture configuration.
-
-        Note: This is a sandbox-stage decision. For the full benchmark run,
-        we may need a more sophisticated truncation strategy (e.g., keep
-        first half + last quarter of each document) since some fields like
-        publication date or page count appear at the end. For
-        academic/research, all the metadata of interest (title, authors,
-        abstract, venue) lives in the first 1-2 pages, so head-truncation
-        is essentially lossless for our schema.
-        """
-        max_input_chars = 15_000  # ~11k tokens, conservative
-        if len(text) <= max_input_chars:
+        """Truncate document text. Set max_input_chars=0 in config to disable."""
+        if self.max_input_chars <= 0 or len(text) <= self.max_input_chars:
             return text
-
-        truncated = text[:max_input_chars]
+        truncated = text[: self.max_input_chars]
         logger.info(
             "Truncated document text from %d to %d chars (~%d tokens)",
             len(text), len(truncated), len(truncated) // 4,
