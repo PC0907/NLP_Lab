@@ -9,7 +9,15 @@
 #SBATCH --output=logs/test-%j.out
 #SBATCH --error=logs/test-%j.err
 
+set -e   # exit on any error
+set -x   # print every command before running
+
 source ~/NLP_Lab/setup_env.sh
+
+which python
+python --version
+python -c "import sys; print(sys.executable)"
+python -c "from probe_extraction.config import load_config; print('import OK')"
 
 cd ~/NLP_Lab
 nvidia-smi
