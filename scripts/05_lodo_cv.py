@@ -26,8 +26,8 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
-from src.probe_extraction.config import load_config
-from src.probe_extraction.utils.logging import setup_logging
+from probe_extraction.config import load_config
+from probe_extraction.utils.logging import setup_logging
 
 
 logger = logging.getLogger(__name__)
