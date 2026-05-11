@@ -59,7 +59,8 @@ def load_doc_data(activations_dir: Path, labels_dir: Path, layer: int):
         # Each labels file is a list of {path, label, value, ...}
         # We don't have direct access to is_empty here, but the labels file
         # already excludes is_empty fields (the labeler filters them).
-        fields = labels_data.get("fields", [])
+        # Labels live under "labels" key. Each entry has path_str and is_error.
+        fields = labels_data.get("labels", [])
         if not fields:
             continue
 
@@ -74,13 +75,12 @@ def load_doc_data(activations_dir: Path, labels_dir: Path, layer: int):
             y_list = []
             for field in fields:
                 path_str = field["path_str"]
-                label = 1 if field["label"] == "error" else 0
+                label = int(field["is_error"])
                 key = f"{path_str}__layer{layer}"
                 if key not in act_data:
                     continue
                 X_list.append(act_data[key])
                 y_list.append(label)
-
         if not X_list:
             continue
 
