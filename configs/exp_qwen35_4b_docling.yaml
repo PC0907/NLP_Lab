@@ -1,0 +1,67 @@
+experiment:
+  name: "qwen35_4b_docling"
+  seed: 42
+  artifacts_dir: "artifacts"
+
+model:
+  name: "Qwen/Qwen3.5-4B"
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: true
+  max_new_tokens: 16384 
+  temperature: 0.0
+  top_p: 1.0
+
+activations:
+  layers: [1, 4, 8, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32]
+  position: "last_token"
+  dtype: "float16"
+
+data:
+  benchmark: "extract_bench"
+  benchmark_path: "data/extract-bench"
+  domains:
+    - "academic/research"
+  max_documents: null
+  pdf_extractor: "docling"
+
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 600000
+
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"
