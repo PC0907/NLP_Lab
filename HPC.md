@@ -27,14 +27,14 @@ Practical guide for running the probe-based trust signals project on the Univers
 
 ### SSH
 ```bash
-ssh s44srizv@bender.hpc.uni-bonn.de
+ssh UNI-ID@bender.hpc.uni-bonn.de
 ```
 
 ### Faster SSH (add to `~/.ssh/config` on laptop)
 ```
 Host bender
     HostName bender.hpc.uni-bonn.de
-    User s44srizv
+    User uni-id
     ServerAliveInterval 60
 ```
 Then just: `ssh bender`
