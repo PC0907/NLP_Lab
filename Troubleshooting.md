@@ -1,4 +1,4 @@
-# Troubleshooting Guide — NLP Lab (Probe-Based Trust Signals)
+# Troubleshooting Guide
 
 Common errors encountered during development on the University of Bonn Bender HPC cluster, organized by category. Each entry includes the symptom, root cause, and fix.
 
