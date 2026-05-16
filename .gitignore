@@ -42,3 +42,4 @@ logs/
 # === Jupyter / Kaggle scratch ===
 *.tmp
 .cache/
+datasets/
