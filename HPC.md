@@ -7,7 +7,7 @@ Practical guide for running the probe-based trust signals project on the Univers
 ## 1. Cluster Overview
 
 **Cluster:** Bender (bender.hpc.uni-bonn.de)
-**Username:** s44srizv
+**Username:** UNI-ID
 **Scheduler:** SLURM
 **Available GPUs:**
 
