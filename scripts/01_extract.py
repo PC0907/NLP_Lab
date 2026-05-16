@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-
+from probe_extraction.data.real_kie import RealKIE
 import numpy as np
 from tqdm import tqdm
 
@@ -92,7 +92,14 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
             domains=cfg.data.domains or None,
             max_documents=max_docs,
             pdf_backend=cfg.data.pdf_extractor,
-        )    
+        )
+    if cfg.data.benchmark == "real_kie":
+        max_docs = limit_override if limit_override is not None else cfg.data.max_documents
+        return RealKIE(
+            benchmark_path=cfg.benchmark_path,
+            domains=cfg.data.domains or None,
+            max_documents=max_docs,
+        )
     raise ValueError(f"Unknown benchmark: {cfg.data.benchmark!r}")
 
 
