@@ -380,10 +380,21 @@ class Matcher:
     ) -> None:
         """Two cases: arrays of objects (positional) vs primitives (set)."""
         items_schema = (schema or {}).get("items", {}) if schema else {}
+
+        if schema and schema.get("x-match-mode") == "set_membership":
+            self._emit_set_membership_array_label(
+                schema=items_schema,
+                gold_list=gold_list,
+                extracted_list=extracted_list,
+                path=path,
+                labels=labels,
+                unmatched_gold=unmatched_gold,
+            )
+            return
+
         is_object_array = _is_object_array(items_schema, gold_list, extracted_list)
 
-        if is_object_array:
-            # Positional alignment.
+        if is_object_array:            # Positional alignment.
             n = max(len(gold_list), len(extracted_list))
             for i in range(n):
                 g = gold_list[i] if i < len(gold_list) else None
@@ -414,6 +425,8 @@ class Matcher:
                 labels=labels,
             )
 
+
+    
     def _emit_primitive_array_label(
         self,
         *,
@@ -462,6 +475,82 @@ class Matcher:
                 extracted_present=extracted_present,
             )
         )
+
+    def _emit_set_membership_array_label(self,*,schema,gold_list,extracted_list,path,labels,unmatched_gold,):
+        strategy = self._strategy_for(schema, default=ComparisonStrategy.CASE_INSENSITIVE)
+    
+        # Track which gold elements got matched by at least one extracted element.
+        gold_matched = [False] * len(gold_list)
+        gold_present_overall = any(_has_content(g) for g in gold_list)
+    
+        for i, extracted_value in enumerate(extracted_list):
+            extracted_present = _has_content(extracted_value)
+    
+            if not extracted_present:
+                # Model emitted an empty element. No real value, no useful
+                # activation — 03_train_probe filters extracted_present=False.
+                # Emit the label anyway for completeness/reporting.
+                labels.append(
+                    FieldLabel(
+                        path=list(path) + [i],
+                        path_str=_path_to_string(path + [i]),
+                        gold_value=None,
+                        extracted_value=extracted_value,
+                        is_error=1,
+                        error_type="omission",
+                        comparison_strategy=f"set_membership_{strategy.value}",
+                        gold_present=gold_present_overall,
+                        extracted_present=False,
+                    )
+                )
+                continue
+    
+            # Find the first gold element this extracted value matches.
+            matched_gold_idx = None
+            for gi, gold_value in enumerate(gold_list):
+                if not _has_content(gold_value):
+                    continue
+                if compare_values(
+                    gold_value,
+                    extracted_value,
+                    strategy=strategy,
+                    fuzzy_threshold=self.fuzzy_threshold,
+                    number_tolerance=self.number_tolerance,
+                ):
+                    matched_gold_idx = gi
+                    break
+    
+            if matched_gold_idx is not None:
+                gold_matched[matched_gold_idx] = True
+                is_error = 0
+                error_type = "match"
+                matched_gold_value = gold_list[matched_gold_idx]
+            else:
+                is_error = 1
+                # No gold to match at all -> hallucination; gold exists but this
+                # value is not among it -> a genuine wrong value.
+                error_type = "hallucination" if not gold_present_overall else "value_mismatch"
+                matched_gold_value = None
+    
+            labels.append(
+                FieldLabel(
+                    path=list(path) + [i],
+                    path_str=_path_to_string(path + [i]),
+                    gold_value=matched_gold_value,
+                    extracted_value=extracted_value,
+                    is_error=is_error,
+                    error_type=error_type,
+                    comparison_strategy=f"set_membership_{strategy.value}",
+                    gold_present=gold_present_overall,
+                    extracted_present=True,
+                )
+            )
+    
+        # Record gold elements nobody matched (omissions) for reporting only.
+        for gi, was_matched in enumerate(gold_matched):
+            if not was_matched and _has_content(gold_list[gi]):
+                unmatched_gold.append(list(path) + [f"gold{gi}"])
+
 
     # ------------------------------------------------------------------------
     # Leaf label emission

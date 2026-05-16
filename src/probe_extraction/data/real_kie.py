@@ -71,12 +71,33 @@ logger = logging.getLogger(__name__)
 # add a {schema, label_to_field} entry to REALKIE_DATASETS. Nothing else in
 # this file is dataset-specific.
 
+# Each field is an array in "set_membership" match mode. That mode (handled by
+# Matcher._emit_set_membership_array_label) emits one label PER extracted
+# element and scores each element correct if it matches ANY gold element --
+# the right semantics here because (a) every element should be its own probe
+# sample, and (b) the model's element order need not match gold's.
+#
+# The per-element evaluation_config is "string_case_insensitive". Rationale:
+# RealKIE gold spans carry OCR/annotation noise (newlines, trailing
+# punctuation) that the loader's _normalize_span_text already strips, so gold
+# is clean; the remaining expected gap between gold and a correct model
+# extraction is casing (e.g. "washington" vs "Washington"). EXACT would
+# wrongly flag those; FUZZY (token-Jaccard) risks false MATCHES on short
+# values like dates or one-word jurisdictions. CASE_INSENSITIVE is the
+# calibrated middle. Revisit if first-run labels look systematically wrong.
+
+_NDA_ELEMENT_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "evaluation_config": "string_case_insensitive",
+}
+
 _NDA_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "party": {
             "type": "array",
-            "items": {"type": "string"},
+            "x-match-mode": "set_membership",
+            "items": _NDA_ELEMENT_SCHEMA,
             "description": (
                 "Names of the organizations or individuals who are parties "
                 "to (i.e. signatories of) this non-disclosure agreement. "
@@ -85,7 +106,8 @@ _NDA_SCHEMA: dict[str, Any] = {
         },
         "jurisdiction": {
             "type": "array",
-            "items": {"type": "string"},
+            "x-match-mode": "set_membership",
+            "items": _NDA_ELEMENT_SCHEMA,
             "description": (
                 "The governing-law jurisdiction(s) of the agreement: the "
                 "state, country, or legal jurisdiction whose laws govern it, "
@@ -94,7 +116,8 @@ _NDA_SCHEMA: dict[str, Any] = {
         },
         "effective_date": {
             "type": "array",
-            "items": {"type": "string"},
+            "x-match-mode": "set_membership",
+            "items": _NDA_ELEMENT_SCHEMA,
             "description": (
                 "The effective date(s) of the agreement, exactly as written "
                 "in the document (the date on which the agreement takes "
