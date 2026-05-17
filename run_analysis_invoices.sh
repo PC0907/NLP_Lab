@@ -13,8 +13,8 @@ set -euo pipefail
 cd ~/NLP_Lab
 
 python scripts/02_label.py       --config configs/exp_qwen35_4b_invoices.yaml
-python scripts/03_train_probe.py --config configs/exp_qwen35_4b_invoices.yaml
-python scripts/04_evaluate.py    --config configs/exp_qwen35_4b_invoices.yaml
-
+# python scripts/03_train_probe.py --config configs/exp_qwen35_4b_invoices.yaml
+# python scripts/04_evaluate.py    --config configs/exp_qwen35_4b_invoices.yaml
+p
 echo "=== RESULTS ==="
 cat artifacts/qwen35_4b_invoices/results/comparison.json 2>/dev/null || echo "no comparison.json"

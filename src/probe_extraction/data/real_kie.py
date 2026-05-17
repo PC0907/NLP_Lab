@@ -554,10 +554,9 @@ class RealKIE(Benchmark):
             label = span.get("label")
             field = label_to_field.get(label)
             if field is None:
-                logger.warning(
-                    "Document %s: span label %r is not in the schema; "
-                    "skipping this span.", doc_id, label,
-                )
+                # Label intentionally not in this dataset's schema (e.g.
+                # fcc_invoices header fields, deliberately excluded). Skip
+                # silently — logging per-span floods the output.
                 continue
 
             value = _normalize_span_text(span.get("text", ""))
