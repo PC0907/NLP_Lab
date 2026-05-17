@@ -138,10 +138,92 @@ _NDA_LABEL_TO_FIELD: dict[str, str] = {
     "Effective Date": "effective_date",
 }
 
+# --- fcc_invoices -----------------------------------------------------------
+# Line-item fields only. The header fields (Agency, Payment Terms, Agency
+# Commission, Advertiser, Gross Total, Net Amount Due) are excluded: the gate
+# report showed 20-32% empty-gold rates for several of them whose cause was
+# not verified, so they are left out rather than risk NDA-style coverage noise.
+# The five line-item fields cleared the gate: dense, low empty%, offsets clean.
+# All five are multi-valued (a table has many rows) -> set_membership mode.
+
+_INVOICE_ELEMENT_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "evaluation_config": "string_case_insensitive",
+}
+
+_INVOICE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "line_item_description": {
+            "type": "array",
+            "x-match-mode": "set_membership",
+            "items": _INVOICE_ELEMENT_SCHEMA,
+            "description": (
+                "The description of each line item / advertising spot in the "
+                "invoice's main table (e.g. the program name or daypart). One "
+                "entry per row of the table."
+            ),
+        },
+        "line_item_rate": {
+            "type": "array",
+            "x-match-mode": "set_membership",
+            "items": _INVOICE_ELEMENT_SCHEMA,
+            "description": (
+                "The rate / cost amount for each line item in the invoice's "
+                "main table, exactly as written. One entry per table row."
+            ),
+        },
+        "line_item_days": {
+            "type": "array",
+            "x-match-mode": "set_membership",
+            "items": _INVOICE_ELEMENT_SCHEMA,
+            "description": (
+                "The days-of-week or scheduling field for each line item in "
+                "the invoice's main table, exactly as written. One entry per "
+                "table row."
+            ),
+        },
+        "line_item_start_date": {
+            "type": "array",
+            "x-match-mode": "set_membership",
+            "items": _INVOICE_ELEMENT_SCHEMA,
+            "description": (
+                "The start date for each line item in the invoice's main "
+                "table, exactly as written. One entry per table row."
+            ),
+        },
+        "line_item_end_date": {
+            "type": "array",
+            "x-match-mode": "set_membership",
+            "items": _INVOICE_ELEMENT_SCHEMA,
+            "description": (
+                "The end date for each line item in the invoice's main "
+                "table, exactly as written. One entry per table row."
+            ),
+        },
+    },
+    "required": [
+        "line_item_description", "line_item_rate", "line_item_days",
+        "line_item_start_date", "line_item_end_date",
+    ],
+}
+
+_INVOICE_LABEL_TO_FIELD: dict[str, str] = {
+    "Line Item - Description": "line_item_description",
+    "Line Item - Rate": "line_item_rate",
+    "Line Item - Days": "line_item_days",
+    "Line Item - Start Date": "line_item_start_date",
+    "Line Item - End Date": "line_item_end_date",
+}
+
 REALKIE_DATASETS: dict[str, dict[str, Any]] = {
     "nda": {
         "schema": _NDA_SCHEMA,
         "label_to_field": _NDA_LABEL_TO_FIELD,
+    },
+    "fcc_invoices": {
+        "schema": _INVOICE_SCHEMA,
+        "label_to_field": _INVOICE_LABEL_TO_FIELD,
     },
 }
 
