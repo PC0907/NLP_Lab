@@ -22,9 +22,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).parent))
+from importlib import import_module
+load_benchmark = import_module("01_extract").load_benchmark
+
 from probe_extraction.config import load_config
-from probe_extraction.data.extract_bench import ExtractBench
 from probe_extraction.labeling.matcher import LabelingResult, label_extraction
+
+# from probe_extraction.config import load_config
+# from probe_extraction.data.extract_bench import ExtractBench
+# from probe_extraction.labeling.matcher import LabelingResult, label_extraction
 from probe_extraction.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -115,10 +124,7 @@ def main() -> int:
     labels_dir.mkdir(parents=True, exist_ok=True)
 
     # We need gold annotations from the benchmark.
-    benchmark = ExtractBench(
-        benchmark_path=cfg.benchmark_path,
-        domains=cfg.data.domains or None,
-    )
+    benchmark = load_benchmark(cfg)
     gold_by_id: dict[str, dict[str, Any]] = {}
     schema_by_domain: dict[str, dict[str, Any]] = {
         d: benchmark.get_schema(d) for d in benchmark.domains
