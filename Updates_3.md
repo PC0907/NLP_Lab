@@ -212,7 +212,7 @@ first multi-domain, methodologically-clean positive result.
 
 ---
 
-## 8. Supervisor questions — token position and layer
+## 8. Questions from last week
 
 Two questions raised the previous week concerned *which token and which layer*
 the probe captures, with a suggested embedding-only control.
@@ -255,8 +255,6 @@ down-weighting refinement is noted for future work.
 
 ## 9. Planned experiments
 
-In rough order of effort:
-
 - **Embedding-only control** (layer 0). Re-extract with layer 0 added to the
   captured layers and probe on it. A layer-0 probe can only learn which tokens
   appeared, with no contextual computation — so layer-0 ≈ mid-layer would be a
@@ -285,10 +283,3 @@ In rough order of effort:
 
 ---
 
-## 10. One-line status
-
-The probe trust signal is confirmed under LODO across four pooled domains,
-outperforms the token-logprob baseline (0.828 vs 0.772), and the captured
-activation is verified to be a content token at a contextually-informative
-mid-network layer — not a structural token or a surface feature. Preliminary
-but methodologically clean, and ready for Stage 5.
