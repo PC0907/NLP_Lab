@@ -1,8 +1,6 @@
 # Dataset Evaluation: RealKIE — Findings and Path Forward
 
 **Date:** May 17, 2026
-**Author:** Syed Ali Mehdi Rizvi
-**Project:** Probe-based trust signals for structured information extraction
 **Purpose:** Document why the RealKIE benchmark was evaluated, why two of its
 datasets were found unsuitable for this pipeline, and what the evaluation
 established about dataset requirements going forward.
