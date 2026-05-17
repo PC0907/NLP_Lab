@@ -212,7 +212,7 @@ first multi-domain, methodologically-clean positive result.
 
 ---
 
-## 8. Questions from last week
+## 8. Questions from Last week
 
 Two questions raised the previous week concerned *which token and which layer*
 the probe captures, with a suggested embedding-only control.
@@ -253,21 +253,47 @@ down-weighting refinement is noted for future work.
 
 ---
 
-## 9. Planned experiments
+## 9. Completed: token-position ablation
+
+The extractor supports `last_token`, `mean`, and `all` position-reduction
+strategies; all results above use `last_token`. To test whether that choice
+matters, two domains (academic + credit_agreement) were re-extracted with
+`position: mean` and compared against `last_token` on the **identical 8
+documents** that both runs successfully extracted (the others hit GPU OOM or
+JSON truncation — the same documents failing in both runs, so the comparison
+set is matched).
+
+**LODO AUROC, best layer each:**
+
+| Strategy | Best layer | LODO AUROC |
+|---|---|---|
+| `last_token` | 20 | 0.861 |
+| `mean` | 28 | 0.831 |
+
+`last_token` edges out `mean` by ~0.03 at peak — directionally consistent with
+the literature (HaMI, arXiv:2504.07863, finds last-token strongest among fixed
+token choices). **However, with only 8 documents / 8 LODO folds and per-fold
+std of ±0.12-0.19, a 0.03 gap is within noise.** The honest conclusion is that
+the position choice does not make a large difference at this sample size, and
+the existing `last_token` default is validated rather than beaten. A side
+observation: `mean` shifts the best layer deeper (28 vs 20).
+
+This ablation also surfaced one consistently pathological document
+(NIPS-1989), whose per-fold AUROC sits below 0.5 across most layers for both
+strategies — a single document depressing the mean and inflating variance.
+Worth a closer look; noted for follow-up.
+
+---
+
+## 10. Planned experiments
+
+In rough order of effort:
 
 - **Embedding-only control** (layer 0). Re-extract with layer 0 added to the
   captured layers and probe on it. A layer-0 probe can only learn which tokens
   appeared, with no contextual computation — so layer-0 ≈ mid-layer would be a
   deflationary result, and layer-0 ≪ mid-layer confirms the signal is genuine.
   Directly tests the layer-1 observation above.
-
-- **Token-position ablation.** The extractor supports `last_token`, `mean`,
-  and `all` position strategies; all results so far use `last_token`.
-  Re-extract two domains with `position: mean` and compare LODO. The
-  literature (HaMI, arXiv:2504.07863) finds last-token strongest among fixed
-  choices; this tests whether that holds on our task. Requires re-extraction
-  (a GPU run), as alternative positions are not recoverable from saved
-  artifacts.
 
 - **Cross-model replication (Llama-3.1-8B).** Does the LODO probe-vs-baseline
   gap hold on a different architecture — the most important robustness check.
@@ -282,4 +308,3 @@ down-weighting refinement is noted for future work.
   by a probe that beats the baseline under LODO.
 
 ---
-
