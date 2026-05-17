@@ -323,11 +323,27 @@ class Matcher:
 
         # Gold is list, extracted isn't (or vice versa)
         # Gold is list, extracted isn't (or vice versa)
+        # Gold is list, extracted isn't (or vice versa)
         if isinstance(gold, list) or isinstance(extracted, list):
+            # Set-membership arrays handle a missing side directly: coerce
+            # whichever side is not a list into an empty list and label once.
+            # This avoids the recursive empty-substitution below, which loops
+            # forever when gold=[] and extracted=None simultaneously.
+            if sub_schema and sub_schema.get("x-match-mode") == "set_membership":
+                self._handle_list_pair(
+                    schema=sub_schema,
+                    gold_list=gold if isinstance(gold, list) else [],
+                    extracted_list=extracted if isinstance(extracted, list) else [],
+                    path=path,
+                    labels=labels,
+                    unmatched_gold=unmatched_gold,
+                    unmatched_extracted=unmatched_extracted,
+                )
+                return
             # Same structural treatment as for dicts above: if the other side
             # is None/empty, recurse with an empty list as the substitute so
             # we emit per-element labels.
-            if gold is None or (isinstance(gold, list) and len(gold) == 0):
+            if gold is None or (isinstance(gold, list) and len(gold) == 0):                
                 self._walk(
                     schema=sub_schema,
                     gold=[],
