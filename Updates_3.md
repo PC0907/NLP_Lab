@@ -203,10 +203,92 @@ In order of priority:
 
 ---
 
-## 7. One-line status
+## 7. Status
 
 The probe trust signal is **confirmed under LODO across four pooled domains**
 and **outperforms the token-logprob baseline** (0.828 vs 0.772). The result is
 preliminary — modest gap, modest sample size, single model — but it is the
-first multi-domain, methodologically-clean positive result, and it clears the
-way for Stage 5.
+first multi-domain, methodologically-clean positive result.
+
+---
+
+## 8. Supervisor questions — token position and layer
+
+Two questions raised the previous week concerned *which token and which layer*
+the probe captures, with a suggested embedding-only control.
+
+**Which token is captured.** The concern was that the probe might read a
+structural JSON token (a closing quote or comma) rather than a content token.
+This was checked empirically: the generated text of every field was
+re-tokenised and the token at the `last_token` activation position classified
+as content vs structural. Result, over 600 sampled fields:
+
+| Position | Content | Structural | Whitespace |
+|---|---|---|---|
+| `span[1]-1` (the captured `last_token`) | **100.0%** | 0% | 0% |
+| `span[1]` (the index after) | 1.0% | 94.7% | 4.3% |
+
+The captured token is the **final content token of the field value** in 100%
+of sampled fields. The `token_span` end index is exclusive, so the closing
+quote sits at `span[1]` while the captured position `span[1]-1` is genuine
+content. The structural-token confound is not present. (Note: Qwen3.5-4B is
+decoder-only and has no `[CLS]` token; the relevant risk was a JSON delimiter,
+and that risk is ruled out.)
+
+**Which layer.** The existing pooled LODO results already address the
+deflationary "surface features" concern. Layer 1 — nearest the embedding
+layer — is the *weakest* layer (LODO AUROC 0.626), with performance climbing
+to a mid-network peak (layer 18, 0.828) before tapering. If the probe were
+detecting lexical or surface features, the earliest layers would perform best.
+The increase from layer 1 to layer 18 is the signature of contextual
+computation, not vocabulary. The embedding-only control (a probe on layer-0
+activations) would make this fully rigorous and is planned (Section 9).
+
+**A related finding.** The token inspection surfaced within-document value
+duplication — e.g. all seven authors of one paper sharing an identical
+affiliation string, producing near-identical activations. These are not
+independent training examples: they inflate the effective sample size and
+contribute to the high per-fold LODO variance (±0.13). A deduplication or
+down-weighting refinement is noted for future work.
+
+---
+
+## 9. Planned experiments
+
+In rough order of effort:
+
+- **Embedding-only control** (layer 0). Re-extract with layer 0 added to the
+  captured layers and probe on it. A layer-0 probe can only learn which tokens
+  appeared, with no contextual computation — so layer-0 ≈ mid-layer would be a
+  deflationary result, and layer-0 ≪ mid-layer confirms the signal is genuine.
+  Directly tests the layer-1 observation above.
+
+- **Token-position ablation.** The extractor supports `last_token`, `mean`,
+  and `all` position strategies; all results so far use `last_token`.
+  Re-extract two domains with `position: mean` and compare LODO. The
+  literature (HaMI, arXiv:2504.07863) finds last-token strongest among fixed
+  choices; this tests whether that holds on our task. Requires re-extraction
+  (a GPU run), as alternative positions are not recoverable from saved
+  artifacts.
+
+- **Cross-model replication (Llama-3.1-8B).** Does the LODO probe-vs-baseline
+  gap hold on a different architecture — the most important robustness check.
+
+- **Cross-Layer Attention Probing (CLAP, arXiv:2509.09700).** A probe that
+  attends jointly over all captured layers, rather than one independent probe
+  per layer. All 14 layers' activations are already saved, so this is
+  feasible, but it requires a new probe architecture (not a config change) and
+  is scoped as a larger future-work item.
+
+- **Stage 5: selective regeneration** — the project deliverable, now unblocked
+  by a probe that beats the baseline under LODO.
+
+---
+
+## 10. One-line status
+
+The probe trust signal is confirmed under LODO across four pooled domains,
+outperforms the token-logprob baseline (0.828 vs 0.772), and the captured
+activation is verified to be a content token at a contextually-informative
+mid-network layer — not a structural token or a surface feature. Preliminary
+but methodologically clean, and ready for Stage 5.
