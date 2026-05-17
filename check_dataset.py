@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
-"""RealKIE dataset gate report.
+"""Dataset gate report for the probe pipeline.
 
-Run BEFORE adopting any RealKIE dataset into the probe pipeline. It exists
-because the NDA dataset passed a casual look ("~2 spans/doc, looks populated")
-but was in fact sparsely annotated -- gold captured only some of the correct
-values, so the labeling stage produced 55/55 fake errors. This script measures
-the properties that would have surfaced that, and prints targeted samples so a
-human can judge the one thing no script can: annotation COMPLETENESS.
+Run BEFORE adopting any candidate dataset into the probe pipeline.
+
+History -- why this script has the checks it does:
+  * The NDA dataset passed a casual look ("~2 spans/doc, looks populated")
+    but was sparsely annotated: gold captured only some of the correct
+    values, so labeling produced 55/55 fake errors. Sections 2 and 4 were
+    added to surface that.
+  * fcc_invoices then PASSED sections 1-5 but still failed in the pipeline,
+    for two reasons section 1-5 did not check:
+      (a) Per-document completeness: some docs annotate only a subset of
+          fields (e.g. only start_date), so "not in gold" is unreliable
+          PER DOCUMENT even when the dataset looks dense in aggregate.
+      (b) Tabular structure: line-item fields are rows of a table. The
+          pipeline's set-membership matching pools all row values into a
+          bag and loses row alignment, turning correct extractions into
+          fake mismatches.
+    Sections 6 and 7 were added to catch these.
 
 It deliberately renders NO pass/fail verdict. It reports numbers; you decide.
+A dataset is a good fit for THIS pipeline when its fields are flat (one value
+or an unordered set per field, NOT table rows) and gold is complete both in
+aggregate AND per document.
 
 What it measures (automated)
 ----------------------------
@@ -244,6 +258,115 @@ def report_underannotation(records: list[dict], labels: list[str]) -> None:
     print("                    regex over-fires; confirm in section 5)")
 
 
+def report_per_doc_coverage(records: list[dict], labels: list[str]) -> None:
+    """Per-document field coverage -- catches the fcc_invoices partial-gold case.
+
+    Section 2 measures whether a field is dense ACROSS the dataset. That is
+    not enough: a dataset can be dense in aggregate yet have many individual
+    documents where only a subset of fields is annotated. On those documents
+    "extracted value not in gold" is unreliable for the un-annotated fields,
+    exactly the fcc_invoices doc that annotated only start_date.
+
+    This reports, per document, how many of the dataset's fields have at
+    least one gold span -- and the distribution of that coverage.
+    """
+    banner("6. PER-DOCUMENT FIELD COVERAGE  (the fcc_invoices failure)")
+    n_fields = len(labels)
+    if n_fields == 0:
+        print("  no labels.")
+        return
+
+    coverage_counts: list[int] = []  # how many fields covered, per doc
+    for r in records:
+        present = {
+            s.get("label") for s in r["spans"]
+            if isinstance(s, dict) and s.get("label") in labels
+        }
+        coverage_counts.append(len(present))
+
+    n_docs = len(records)
+    full = sum(1 for c in coverage_counts if c == n_fields)
+    none = sum(1 for c in coverage_counts if c == 0)
+    partial = n_docs - full - none
+
+    print(f"  dataset has {n_fields} fields; per document, gold covers:")
+    print(f"    all {n_fields} fields : {full:5d} docs ({100.0*full/n_docs:.1f}%)")
+    print(f"    some fields    : {partial:5d} docs ({100.0*partial/n_docs:.1f}%)")
+    print(f"    zero fields    : {none:5d} docs ({100.0*none/n_docs:.1f}%)")
+
+    # Histogram of coverage counts.
+    hist = Counter(coverage_counts)
+    print("\n  coverage histogram (fields covered -> doc count):")
+    for k in range(n_fields + 1):
+        bar = "#" * min(50, hist.get(k, 0))
+        print(f"    {k:2d} fields: {hist.get(k,0):5d}  {bar}")
+
+    print()
+    print("  Reading this: a high 'some fields' or 'zero fields' count means")
+    print("  per-document gold is incomplete. The pipeline assumes that if a")
+    print("  field is in the schema, gold for it on each doc is complete --")
+    print("  partial coverage breaks that and produces fake errors.")
+
+
+def report_tabular_check(records: list[dict], labels: list[str]) -> None:
+    """Flag fields that look like table rows -- the other fcc_invoices failure.
+
+    The pipeline's set-membership matching treats a field's values as an
+    unordered set: an extracted value is correct if it equals ANY gold value.
+    That is right for genuinely unordered fields (a document's set of party
+    names) but wrong for ROWS OF A TABLE, where value position carries
+    meaning and the same value (e.g. a rate of '0.00') recurs across rows.
+
+    Heuristic: a field is "tabular-like" if populated docs commonly have many
+    spans for it (median well above 1) AND those spans contain heavy
+    duplication (the same value repeated). Both are hallmarks of table
+    columns. Flat fields (party, jurisdiction) have few, mostly-distinct
+    values per doc.
+    """
+    banner("7. TABULAR-STRUCTURE CHECK  (set-membership matching fitness)")
+    print("  The pipeline matches multi-valued fields by set membership,")
+    print("  which is correct for unordered sets but WRONG for table columns")
+    print("  (row position matters, values repeat). This flags fields whose")
+    print("  shape looks tabular.\n")
+
+    header = f"  {'label':28s} {'med/doc':>8s} {'dup-rate':>9s}  assessment"
+    print(header)
+    print("  " + "-" * (len(header) + 8))
+    for lab in labels:
+        per_doc_vals: list[list[str]] = []
+        for r in records:
+            vals = [
+                str(s.get("text", "")) for s in r["spans"]
+                if isinstance(s, dict) and s.get("label") == lab
+            ]
+            if vals:
+                per_doc_vals.append(vals)
+        if not per_doc_vals:
+            print(f"  {lab:28s} {'--':>8s} {'--':>9s}  (no gold)")
+            continue
+
+        med = statistics.median(len(v) for v in per_doc_vals)
+        # duplication rate: 1 - (distinct / total), averaged over docs
+        dup_rates = [
+            1.0 - len(set(v)) / len(v) for v in per_doc_vals if v
+        ]
+        dup = statistics.mean(dup_rates) if dup_rates else 0.0
+
+        if med >= 5 and dup >= 0.2:
+            verdict = "TABULAR -- set-membership unsafe"
+        elif med >= 5:
+            verdict = "many values/doc -- inspect"
+        else:
+            verdict = "flat -- set-membership ok"
+        print(f"  {lab:28s} {med:8.1f} {dup:8.1%}  {verdict}")
+
+    print()
+    print("  'TABULAR' means the field is a table column: many values per")
+    print("  doc, heavy repetition. Set-membership matching loses row")
+    print("  alignment for these and will manufacture fake errors. Such a")
+    print("  field needs row-aligned matching, which the pipeline does not do.")
+
+
 def report_manual_samples(records: list[dict], n_samples: int) -> None:
     """Print gold values with surrounding text for human completeness review."""
     banner(f"5. MANUAL INSPECTION  ({n_samples} sampled docs)")
@@ -305,6 +428,8 @@ def main() -> int:
     report_label_density(records, labels)
     report_offset_integrity(records)
     report_underannotation(records, labels)
+    report_per_doc_coverage(records, labels)
+    report_tabular_check(records, labels)
     report_manual_samples(records, args.samples)
 
     banner("END OF REPORT")
@@ -312,7 +437,15 @@ def main() -> int:
     print("   - section 2: is empty% low enough that 'not in gold' is")
     print("     meaningful for the fields you care about?")
     print("   - section 4: is the text/gold ratio near 1.0?")
+    print("   - section 6: do MOST docs cover ALL fields? Partial per-doc")
+    print("     coverage produces fake errors even if the dataset looks dense.")
+    print("   - section 7: are the fields flat, not tabular? Tabular fields")
+    print("     break set-membership matching.")
     print("   - section 5: does your eyeball read confirm gold is complete?")
+    print()
+    print("  A dataset fits this pipeline only if: gold is complete per")
+    print("  document (6), fields are flat not tabular (7), and a manual")
+    print("  read confirms completeness (5).")
     print()
     return 0
 
