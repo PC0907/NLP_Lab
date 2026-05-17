@@ -22,7 +22,7 @@ SOURCES = {
 def main() -> int:
     (POOLED / "labels").mkdir(parents=True, exist_ok=True)
     (POOLED / "activations").mkdir(parents=True, exist_ok=True)
-
+    (POOLED / "extractions").mkdir(parents=True, exist_ok=True)
     total_docs = total_labels = total_dropped = 0
 
     for exp_name, drop_fields in SOURCES.items():
@@ -60,8 +60,16 @@ def main() -> int:
                 shutil.copy2(act_path, POOLED / "activations" / act_path.name)
             else:
                 print(f"  WARNING: no activations for {lab_path.stem}")
-            total_docs += 1
 
+            # Copy the matching extraction file (token logprobs for baselines).
+            ext_path = src / "extractions" / f"{lab_path.stem}.json"
+            if ext_path.exists():
+                shutil.copy2(ext_path, POOLED / "extractions" / ext_path.name)
+            else:
+                print(f"  WARNING: no extraction file for {lab_path.stem}")
+
+            total_docs += 1
+            
     print(f"Pooled {total_docs} docs, {total_labels} labels kept, "
           f"{total_dropped} dropped (10kq metadata fields).")
     print(f"Pooled dir: {POOLED}")
