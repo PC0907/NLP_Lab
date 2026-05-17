@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=A40short
+#SBATCH --partition=A100short
 #SBATCH --time=5:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
@@ -8,6 +8,7 @@
 #SBATCH --job-name=qwen35_10kq
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
+#SBATCH --exclude=node-05
 
 source ~/NLP_Lab/setup_env.sh
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
