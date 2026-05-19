@@ -34,7 +34,7 @@ candidate. Two of its datasets (NDA, then fcc_invoices) were assessed and both
 found unsuitable — RealKIE's annotations are not complete enough per document,
 and its line-item fields are tabular, which the pipeline's matching does not
 support. **Full reasoning, evidence, and the recommended dataset requirements
-are documented separately in `dataset_evaluation_realkie.md`.**
+are documented separately in `Problem_with_Dataset.md`.**
 
 The evaluation was not wasted: it produced reusable pipeline capabilities
 (a benchmark-dispatch mechanism, a set-membership matching mode, a
