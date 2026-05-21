@@ -17,7 +17,7 @@ cd ~/NLP_Lab
 echo "=== environment ==="
 cat /proc/cpuinfo | grep "model name" | head -1
 which python
-nvidia-smi | head -3
+nvidia-smi || true
 
 echo "=== 01 extract (A100) ==="
 python scripts/01_extract.py --config configs/exp_qwen35_4b_credit.yaml
