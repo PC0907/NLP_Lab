@@ -11,13 +11,17 @@
 #SBATCH --error=logs/slurm-%j.err
 
 source ~/NLP_Lab/setup_env_a100.sh
-set -euo pipefail
+
 cd ~/NLP_Lab
 
 echo "=== environment ==="
-cat /proc/cpuinfo | grep "model name" | head -1
-which python
+grep "model name" /proc/cpuinfo | head -1 || true
+echo "which python: $(which python || echo 'not found')"
+echo "Python version: $(python --version 2>&1 || echo 'failed')"
 nvidia-smi || true
+echo "=== environment OK ==="
+
+set -euo pipefail
 
 echo "=== 01 extract (A100) ==="
 python scripts/01_extract.py --config configs/exp_qwen35_4b_credit.yaml
