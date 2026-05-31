@@ -114,6 +114,40 @@ def compare_values(
 # Strategy implementations
 # ============================================================================
 
+def _compare_auto(g: Any, e: Any, *, fuzzy_threshold: float, number_tolerance: float) -> bool:
+    """Type-aware comparison for fields with no explicit evaluation_config.
+
+    Cascade: if both parse as numbers -> numeric tolerance; else if both
+    parse as dates -> date compare; else -> case-insensitive string compare.
+    Deliberately does NOT use fuzzy for the string fallback, to avoid
+    suppressing real errors that happen to share tokens (e.g. period
+    strings 'FY2025 Q2' vs 'FY2025 Q1').
+    """
+    # Try numeric first.
+    if _looks_numeric(g) and _looks_numeric(e):
+        return _compare_number(g, e, tolerance=number_tolerance)
+    # Then date.
+    gd, ed = _try_parse_date(str(g)), _try_parse_date(str(e))
+    if gd is not None and ed is not None:
+        return gd == ed
+    # Fallback: case-insensitive string.
+    return _compare_case_insensitive(g, e)
+
+
+def _looks_numeric(v: Any) -> bool:
+    if isinstance(v, bool):
+        return False  # don't treat True/False as 1/0
+    if isinstance(v, (int, float)):
+        return True
+    if isinstance(v, str):
+        s = v.strip().replace(",", "").replace("$", "")
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+    return False
+
 def _compare_exact(g: Any, e: Any) -> bool:
     """Strict equality with type coercion for numeric/boolean strings.
 
