@@ -1,10 +1,5 @@
 # Project Updates — Probe-Based Trust Signals for Selective Regeneration
 
-_Team #9 · Qwen3.5-4B · ExtractBench · Bender HPC_
-_Last updated: 1 June 2026_
-
----
-
 ## 1. Headline status
 
 The pooled four-domain probe result is confirmed and has improved with a larger,
