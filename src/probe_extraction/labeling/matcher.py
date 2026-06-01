@@ -586,7 +586,7 @@ class Matcher:
         extracted_present = _has_content(extracted)
 
         # Choose strategy from schema.
-        strategy = self._strategy_for(schema, default=ComparisonStrategy.EXACT)
+        strategy = self._strategy_for(schema, default=ComparisonStrategy.AUTO)
 
         if not gold_present and not extracted_present:
             # Both empty/null. Correct.

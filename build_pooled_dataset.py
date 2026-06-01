@@ -1,28 +1,46 @@
 """Build a pooled four-domain experiment directory for combined probe/LODO runs.
 
 Copies labels/ and activations/ from each source experiment into one pooled
-directory. For finance/10kq, drops the systematic-bias metadata field types
-(segment_name, data_period) which would otherwise let the probe learn field
-identity instead of a genuine trust signal.
+directory, dropping field types where gold-vs-model disagreement is systematic
+and NOT a genuine model trust signal — i.e. where keeping them would teach the
+probe field identity or penalize the model for annotation/representation
+mismatches rather than real extraction errors.
+
+Dropped field types and rationale:
+  - 10kq segment_name, data_period: systematic metadata bias (model emits
+    "Company"/period where gold has "NA"/different period).
+  - academic citations: gold stores full bibliographic strings; the model
+    emits short author-year keys. A single set-valued field collapses ~11
+    correct short-form citations and a few genuine garbage entries into one
+    binary label — uninformative as a trust signal. Documented as a
+    representation-convention mismatch.
+  - swimming records: gold systematically under-annotates record markers
+    (WR/CR/NR) that the model correctly extracts from the document, producing
+    false-positive "hallucination" labels.   [enable only if confirmed systematic]
 """
-import json, shutil, sys
+
+import json
+import shutil
+import sys
 from pathlib import Path
 
 ARTIFACTS = Path("artifacts")
 POOLED = ARTIFACTS / "qwen35_4b_pooled"
 
-# source experiment dir -> set of field-type names to drop from its labels
+# source experiment dir -> set of field-type names (last path segment) to drop
 SOURCES = {
-    "qwen35_4b_pymupdf":  set(),                          # academic
-    "qwen35_4b_swimming": set(),
+    "qwen35_4b_pymupdf":  {"citations"},                      # academic
+    "qwen35_4b_swimming": set(),                              # see records note below
     "qwen35_4b_credit":   set(),
-    "qwen35_4b_10kq":     {"segment_name", "data_period"},  # systematic-bias fields
+    "qwen35_4b_10kq":     {"segment_name", "data_period"},    # systematic-bias fields
 }
+
 
 def main() -> int:
     (POOLED / "labels").mkdir(parents=True, exist_ok=True)
     (POOLED / "activations").mkdir(parents=True, exist_ok=True)
     (POOLED / "extractions").mkdir(parents=True, exist_ok=True)
+
     total_docs = total_labels = total_dropped = 0
 
     for exp_name, drop_fields in SOURCES.items():
@@ -69,11 +87,12 @@ def main() -> int:
                 print(f"  WARNING: no extraction file for {lab_path.stem}")
 
             total_docs += 1
-            
+
     print(f"Pooled {total_docs} docs, {total_labels} labels kept, "
-          f"{total_dropped} dropped (10kq metadata fields).")
+          f"{total_dropped} dropped (systematic-bias / representation-mismatch fields).")
     print(f"Pooled dir: {POOLED}")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
