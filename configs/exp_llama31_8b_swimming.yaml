@@ -23,7 +23,7 @@ data:
   benchmark: "extract_bench"
   benchmark_path: "data/extract-bench"
   domains:
-    - - "sport/swimming"
+    - "sport/swimming"
   max_documents: null
   pdf_extractor: "pymupdf"
 
