@@ -17,5 +17,5 @@ echo "=== env ==="
 grep "model name" /proc/cpuinfo | head -1 || true
 nvidia-smi || true
 echo "=== smoke: 1 credit doc with Llama ==="
-python scripts/01_extract.py --config configs/exp_llama31_8b_credit.yaml --limit 1
+python scripts/01_extract.py --config configs/exp_llama31_8b_swimming.yaml --limit 1
 echo "=== done ==="
