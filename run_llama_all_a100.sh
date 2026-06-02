@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=A100short
 #SBATCH --export=NONE
-#SBATCH --time=12:00:00
+#SBATCH --time=4:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
