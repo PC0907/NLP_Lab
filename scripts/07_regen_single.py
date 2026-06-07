@@ -44,6 +44,10 @@ def parse_args() -> argparse.Namespace:
                    help="Actually re-extract via the model (needs GPU). Default: dry-run.")
     p.add_argument("--layer", type=int, default=BEST_LAYER)
     p.add_argument("--temperature", type=float, default=0.7)
+    p.add_argument("--probe-path", type=str, default=None,
+                   help="Explicit path to the probe .pkl (defaults to "
+                        "<config artifacts>/probes/probe_layer<L>.pkl). "
+                        "Use the POOLED probe here while running a per-domain config.")
     p.add_argument("--max-gold-len", type=int, default=60,
                    help="Only consider fields whose gold value string is at most "
                         "this many chars (focus on fixable, short fields).")
@@ -142,7 +146,10 @@ def main() -> int:
     activations_dir = artifacts / "activations"
     probes_dir = artifacts / "probes"
 
-    probe_path = probes_dir / f"probe_layer{args.layer}.pkl"
+    if args.probe_path:
+        probe_path = Path(args.probe_path)
+    else:
+        probe_path = probes_dir / f"probe_layer{args.layer}.pkl"
     if not probe_path.exists():
         logger.error("No probe at %s", probe_path)
         return 1
