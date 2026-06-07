@@ -54,23 +54,46 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
+def _resolve_ref(node: dict, root_schema: dict) -> dict:
+    """If node is a {"$ref": "#/$defs/Name"}, return the referenced definition.
+    Follows chained refs. Returns node unchanged if no $ref."""
+    seen = set()
+    while isinstance(node, dict) and "$ref" in node:
+        ref = node["$ref"]
+        if ref in seen:  # cycle guard
+            return {}
+        seen.add(ref)
+        # ref looks like "#/$defs/Name" or "#/definitions/Name"
+        parts = ref.lstrip("#/").split("/")
+        target = root_schema
+        for part in parts:
+            target = target.get(part, {})
+        node = target
+    return node
+
+
 def schema_for_path(schema: dict, path_str: str) -> dict:
     """Walk a JSON Schema to the node for a data path like
-    'age_groups.2.results.0.time'. Numeric segments consume an 'items' level."""
+    'cash_flow_statement.shares_issued.0.unit'. Numeric segments consume an
+    'items' level. Resolves $ref pointers against the root schema's $defs."""
+    root = schema  # keep the root for $ref resolution
     node = schema
     for seg in path_str.split("."):
+        node = _resolve_ref(node, root)
         if seg.isdigit():
-            node = node.get("items", {})
+            node = _resolve_ref(node.get("items", {}), root)
             continue
         props = node.get("properties", {})
         if seg in props:
             node = props[seg]
         else:
-            node = node.get("items", {}).get("properties", {}).get(seg, {})
+            items = _resolve_ref(node.get("items", {}), root)
+            node = items.get("properties", {}).get(seg, {})
+    node = _resolve_ref(node, root)
     if "anyOf" in node:
         variants = [v for v in node["anyOf"] if v.get("type") != "null"]
         if variants:
-            node = variants[0]
+            node = _resolve_ref(variants[0], root)
     return node
 
 
