@@ -51,7 +51,7 @@ high error rates:
 | finance/10kq | ~12% | 85% |
 | finance/credit_agreement | moderate | 86% |
 
-**Cause (documented in `llama_label_contamination.md`):** Llama does not emit
+**Cause (documented in `Problem_with_llama.md`):** Llama does not emit
 the schema's literal key structure. Where gold/Qwen use
 `parties.administrative_agent` (snake_case, flat), Llama emits
 `parties.Administrative Agent.address` (Title-Case keys with spaces, extra
