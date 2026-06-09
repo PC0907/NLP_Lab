@@ -1,0 +1,108 @@
+# Experiment: DeepSeek-R1-Distill-Qwen-7B — all four ExtractBench domains
+#
+# Model notes:
+#   - DeepSeek-R1-Distill-Qwen-7B is a 7B reasoning model distilled from
+#     DeepSeek-R1, built on a Qwen2.5-7B base.
+#   - It generates <think>...</think> tokens before the JSON answer.
+#     parser.py already strips these tags — no code change needed.
+#   - token_logprob baseline is correct: it uses per-field token_span values
+#     which index into the FULL generated sequence (including thinking tokens),
+#     so the sliced logprobs correspond only to the JSON answer tokens.
+#   - Activations are captured at the last token of each field value in the
+#     JSON answer — always in the post-thinking portion. Correct.
+#   - trust_remote_code: false — Qwen2.5 architecture is natively supported
+#     by transformers. Change to true only if you see model loading errors.
+#
+# Layer selection:
+#   Partner (Qwen3.5-4B, 32 layers): [1,4,8,12,14,16,18,20,22,24,26,28,30,32]
+#   Ours (DeepSeek-R1-7B, 28 layers): proportionally mapped (×28/32), 14 layers
+#   This gives equivalent coverage density for fair cross-model comparison.
+#
+# Domain note:
+#   All four domains are extracted in ONE stage-01 job into ONE artifacts dir.
+#   No build_pooled_dataset.py step needed. Stages 02-07 all use this config.
+#   Verify domain strings against your data/extract-bench/ directory if needed.
+
+experiment:
+  name: "deepseek_r1_7b_pooled"
+  seed: 42
+  artifacts_dir: "artifacts"
+
+model:
+  name: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: false
+  max_new_tokens: 16384
+  temperature: 0.0
+  top_p: 1.0
+
+activations:
+  # 14 layers proportionally mapped from partner's [1,4,8,12,14,16,18,20,22,24,26,28,30,32]
+  # to DeepSeek-R1-7B's 28-layer architecture (multiply each by 28/32, round).
+  layers: [1, 4, 7, 10, 12, 14, 16, 18, 19, 21, 23, 24, 26, 28]
+  position: "last_token"
+  dtype: "float16"
+
+data:
+  benchmark: "extract_bench"
+  benchmark_path: "data/extract-bench"
+  domains:
+    - "academic/research"
+    - "sport/swimming"
+    - "finance/10kq"
+    - "finance/credit_agreement"   # verify against your data/ directory
+  max_documents: null
+  pdf_extractor: "pymupdf"
+
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 600000
+
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+
+clap:
+  d_model: 128
+  n_enc: 1
+  dropout: 0.1
+  lr: 5.0e-4
+  epochs: 50
+  batch_size: 64
+  weight_decay: 1.0e-2
+  warmup_epochs: 5
+  patience: 10
+
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"

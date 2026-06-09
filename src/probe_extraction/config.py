@@ -95,6 +95,22 @@ class ProbeConfig(BaseModel):
     test_size: float = 0.2
     cv_folds: int = 5
 
+class ClapConfig(BaseModel):
+    """Hyperparameters for the CLAP cross-layer attention probe.
+ 
+    All fields have defaults so existing YAML configs without a 'clap:'
+    section continue to load without any change.
+    """
+    d_model:       int   = 128   # projection dimension (paper default)
+    n_enc:         int   = 1     # transformer encoder layers (1 or 2)
+    dropout:       float = 0.1   # dropout — critical for small datasets
+    lr:            float = 5e-4  # AdamW learning rate
+    epochs:        int   = 50    # max epochs (early stopping usually fires first)
+    batch_size:    int   = 64    # mini-batch size
+    weight_decay:  float = 1e-2  # L2 regularisation
+    warmup_epochs: int   = 5     # linear LR warmup
+    patience:      int   = 10    # early stopping patience
+
 
 class BaselinesConfig(BaseModel):
     enabled: list[str] = Field(default_factory=list)
@@ -133,6 +149,7 @@ class Config(BaseModel):
     extraction: ExtractionConfig
     labeling: LabelingConfig
     probe: ProbeConfig
+    clap: ClapConfig = Field(default_factory=ClapConfig)
     baselines: BaselinesConfig
     selective_regen: SelectiveRegenConfig
     logging: LoggingConfig
