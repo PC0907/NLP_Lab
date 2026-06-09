@@ -227,6 +227,9 @@ def _strip_to_json(text: str) -> str:
 
     # 0: Strip any <think>...</think> blocks
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[-1].strip()
 
     # 1 & 2: fenced code block
     m = _FENCE_RE.search(text)
