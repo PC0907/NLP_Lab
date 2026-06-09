@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --partition=A40short
-#SBATCH --time=2:00:00
-#SBATCH --gpus=1
+#SBATCH --time=3:00:00
+#SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --job-name=regen_credit
+#SBATCH --job-name=regen_t0
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
 
@@ -15,13 +15,22 @@ set -euo pipefail
 cd ~/NLP_Lab
 
 echo "=== environment ==="
-grep "model name" /proc/cpuinfo | head -1 || true
 nvidia-smi || true
-echo "=== regeneration (GPU) phase: credit ==="
 
+echo "=== regen credit @ temp 0 ==="
 python scripts/09_regen_sweep.py \
   --config configs/exp_qwen35_4b_credit.yaml \
   --probe-path artifacts/qwen35_4b_pooled/probes/probe_layer18.pkl \
+  --temperature 0.0 \
+  --cache artifacts/qwen35_4b_credit/results/regen_cache_t0.json \
   --regenerate
 
-echo "=== done; cache written, run phase 2 (CPU) to build the curve ==="
+echo "=== regen academic @ temp 0 ==="
+python scripts/09_regen_sweep.py \
+  --config configs/exp_qwen35_4b_pymupdf.yaml \
+  --probe-path artifacts/qwen35_4b_pooled/probes/probe_layer18.pkl \
+  --temperature 0.0 \
+  --cache artifacts/qwen35_4b_pymupdf/results/regen_cache_t0.json \
+  --regenerate
+
+echo "=== both done ==="
