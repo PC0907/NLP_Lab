@@ -161,6 +161,3 @@ the first step toward quantifying this.
 
 ---
 
-## Accompanying documents
-- `llama_label_contamination.md` — full diagnosis of the Llama structural /
-  key-naming mismatch, why it contaminates labels, and ranked solutions.
