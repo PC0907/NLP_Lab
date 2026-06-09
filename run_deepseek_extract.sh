@@ -32,14 +32,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # A100 nodes use AMD EPYC CPUs — must load AMD module stack explicitly.
-source /etc/profile
-module unuse /software/easybuild-INTEL_A40/modules/all 2>/dev/null || true
-module use   /software/easybuild-AMD_A100/modules/all
+#source /etc/profile
+#module unuse /software/easybuild-INTEL_A40/modules/all 2>/dev/null || true
+#module use   /software/easybuild-AMD_A100/modules/all
 
 module load Python/3.12.3
 module load CUDA/12.4.0
 
-source ~/nlp_lab_a100/bin/activate
+source ~/nlp_lab/bin/activate
 export PYTHONPATH=$HOME/NLP_Lab/src:$PYTHONPATH
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
