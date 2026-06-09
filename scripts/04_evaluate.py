@@ -1,14 +1,13 @@
-"""Stage 4: Evaluate probe vs. token-logprob baselines.
+"""Stage 4: Evaluate probe vs. baselines.
 
 Builds on Stage 3 outputs (trained probes) and Stage 1 outputs (extractions
 with per-token logprobs and per-field token spans). Computes AUROC for:
-  - Each trained probe (re-evaluated on the same held-out test split for
-    fair comparison)
-  - Mean-logprob baseline
-  - Min-logprob baseline
-
-Reports per-field comparisons so we can see where probe and baselines
-agree/disagree.
+  - Each trained probe (re-evaluated on the same full set for ranking
+    comparison; honest number is the CV/LODO AUROC)
+  - Mean-logprob baseline (scalar, full-set)
+  - Min-logprob baseline (scalar, full-set)
+  - Hand-crafted surface-feature baseline (trained, LODO)
+  - Combined probe + logprob baseline (trained, LODO)
 
 Artifacts written:
   artifacts/results/comparison.json   — head-to-head AUROC numbers
@@ -31,16 +30,24 @@ import numpy as np
 from probe_extraction.baselines import (
     compute_token_logprob_scores,
     evaluate_baseline,
+    evaluate_handcrafted,
+    evaluate_combined,
 )
 from probe_extraction.config import load_config
 from probe_extraction.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
+# Best layer for the combined baseline (Qwen pooled best LODO layer).
+# Change per model if needed (e.g. Llama swimming peaks later).
+BEST_LAYER = 18
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Compare probe vs. baselines.")
     p.add_argument("--config", required=True)
+    p.add_argument("--best-layer", type=int, default=BEST_LAYER,
+                   help="Layer used for the combined probe+logprob baseline.")
     return p.parse_args()
 
 
@@ -82,7 +89,8 @@ def build_evaluation_dataset(
         mean_logprobs: (n,) array
         min_logprobs: (n,) array
         y: (n,) binary error labels
-        meta: list of per-row dicts with doc_id and path_str
+        meta: list of per-row dicts with doc_id, path_str, and value
+              (value enables the hand-crafted baseline's value features)
     """
     per_layer_X: dict[int, list] = {ℓ: [] for ℓ in layers}
     mean_logprobs: list[float] = []
@@ -142,7 +150,13 @@ def build_evaluation_dataset(
                 mean_logprobs.append(lp["mean_logprob"])
                 min_logprobs.append(lp["min_logprob"])
                 y.append(int(lab["is_error"]))
-                meta.append({"doc_id": doc_id, "path_str": path_str})
+                meta.append({
+                    "doc_id": doc_id,
+                    "path_str": path_str,
+                    # value enables hand-crafted value features; falls back
+                    # gracefully if the labeller used a different key name.
+                    "value": lab.get("extracted_value"),
+                })
 
     # Stack
     per_layer_X_arr = {
@@ -165,8 +179,8 @@ def evaluate_probe_on_full_set(probe, X: np.ndarray, y: np.ndarray, layer: int):
     NOTE: This is NOT held-out evaluation — the probe was trained on this
     same data (refit on full set after CV). We're using it here only for
     fair side-by-side comparison with baselines that didn't train on
-    anything. The HONEST AUROC is the CV AUROC reported by Stage 3; this
-    evaluation is for ranking-pattern comparison, not generalization claims.
+    anything. The HONEST AUROC is the CV/LODO AUROC; this full-set number
+    is for ranking-pattern comparison, not generalization claims.
     """
     from probe_extraction.baselines import evaluate_baseline as eval_b
     proba = probe.score(X)
@@ -214,7 +228,9 @@ def main() -> int:
         n, n_errors, 100 * n_errors / max(n, 1),
     )
 
-    # ------ Baselines ------
+    doc_ids = [m["doc_id"] for m in meta]
+
+    # ------ Scalar baselines (full-set) ------
     mean_lp_metrics = evaluate_baseline(
         scores=mean_lp, y=y,
         name="mean_logprob", score_higher_is_error=False,
@@ -232,6 +248,37 @@ def main() -> int:
         "Baseline min_logprob:  AUROC=%.3f, AUPRC=%.3f",
         min_lp_metrics.auroc, min_lp_metrics.auprc,
     )
+
+    # ------ Trained baselines (LODO — comparable to the probe's LODO) ------
+    # These CAN overfit (they are trained), so they are evaluated under
+    # leave-one-document-out, matching scripts/05_lodo_cv.py. Compare their
+    # AUROC to the probe's LODO number (NOT the optimistic full-set AUROC).
+    hand_metrics = evaluate_handcrafted(meta=meta, y=y, C=getattr(cfg.probe, "C", 1.0))
+    logger.info(
+        "Baseline hand_crafted (LODO): AUROC=%.3f, AUPRC=%.3f",
+        hand_metrics.auroc, hand_metrics.auprc,
+    )
+
+    best_layer = args.best_layer
+    combined_metrics = None
+    if best_layer in per_layer_X and per_layer_X[best_layer].size:
+        combined_metrics = evaluate_combined(
+            activations=per_layer_X[best_layer],
+            mean_logprob=mean_lp,
+            min_logprob=min_lp,
+            y=y,
+            doc_ids=doc_ids,
+            layer=best_layer,
+            C=getattr(cfg.probe, "C", 1.0),
+        )
+        logger.info(
+            "Baseline combined_probe_logprob (layer %d, LODO): AUROC=%.3f, AUPRC=%.3f",
+            best_layer, combined_metrics.auroc, combined_metrics.auprc,
+        )
+    else:
+        logger.warning(
+            "Combined baseline skipped: layer %d not in activations.", best_layer
+        )
 
     # ------ Probes ------
     probe_results = {}
@@ -266,19 +313,33 @@ def main() -> int:
         )
 
     # ------ Comparison summary ------
+    baselines_out = {
+        "mean_logprob": {
+            "auroc": mean_lp_metrics.auroc,
+            "auprc": mean_lp_metrics.auprc,
+        },
+        "min_logprob": {
+            "auroc": min_lp_metrics.auroc,
+            "auprc": min_lp_metrics.auprc,
+        },
+        "hand_crafted": {
+            "auroc": hand_metrics.auroc,
+            "auprc": hand_metrics.auprc,
+            "eval": "LODO",
+        },
+    }
+    if combined_metrics is not None:
+        baselines_out["combined_probe_logprob"] = {
+            "auroc": combined_metrics.auroc,
+            "auprc": combined_metrics.auprc,
+            "layer": best_layer,
+            "eval": "LODO",
+        }
+
     comparison = {
         "n_samples": n,
         "n_errors": n_errors,
-        "baselines": {
-            "mean_logprob": {
-                "auroc": mean_lp_metrics.auroc,
-                "auprc": mean_lp_metrics.auprc,
-            },
-            "min_logprob": {
-                "auroc": min_lp_metrics.auroc,
-                "auprc": min_lp_metrics.auprc,
-            },
-        },
+        "baselines": baselines_out,
         "probes": probe_results,
     }
     comparison_path = results_dir / "comparison.json"
@@ -288,8 +349,11 @@ def main() -> int:
     # ------ Headline output ------
     logger.info("=" * 70)
     logger.info("HEAD-TO-HEAD AUROC (higher = better):")
-    logger.info("  Baseline mean_logprob:  %.3f", mean_lp_metrics.auroc)
-    logger.info("  Baseline min_logprob:   %.3f", min_lp_metrics.auroc)
+    logger.info("  Baseline mean_logprob:        %.3f", mean_lp_metrics.auroc)
+    logger.info("  Baseline min_logprob:         %.3f", min_lp_metrics.auroc)
+    logger.info("  Baseline hand_crafted (LODO): %.3f", hand_metrics.auroc)
+    if combined_metrics is not None:
+        logger.info("  Baseline combined (LODO):     %.3f", combined_metrics.auroc)
     for ℓ, pr in probe_results.items():
         cv = pr["auroc_cv_mean"]
         cv_str = f"{cv:.3f}" if cv is not None else "n/a"

@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --partition=A100short
-#SBATCH --export=NONE
-#SBATCH --time=4:00:00
+#SBATCH --partition=A40short
+#SBATCH --time=2:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=48G
 #SBATCH --job-name=regen_credit
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
+
 source ~/NLP_Lab/setup_env.sh
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 set -euo pipefail
