@@ -90,17 +90,16 @@ for long values). Result:
 **Finding:** roughly **40% of errors have gold values not present in the
 extracted text** — extraction-loss or gold errors, unfixable by regeneration and
 not fair to count against the probe. This also doubles as a parsing-quality
-metric (cf. supervisor's value-in-text suggestion; target ~80%, we are below it,
-which motivates a Docling retry).
+metric.
 
-**Important nuance (from hand-audit):** "gold value in text" is necessary but
+**Important nuance:** "gold value in text" is necessary but
 NOT sufficient for "genuine fixable model error". On swimming, most flagged
 errors turned out to be gold gaps (the `records` field), a gold typo, a gold
 length error, or matcher artefacts — not model errors. So the genuinely
 regeneration-addressable set is smaller than the fixable count suggests.
 
 ### 3.2 Correction-with-context regeneration (09, phase 1)
-Instead of blind re-extraction, the prompt shows the model:
+the prompt shows the model:
 - the **parent object** of the target field (its siblings), with the target
   field blanked to `<FILL_THIS>` — giving locating context;
 - the field's key, schema description, and type;
