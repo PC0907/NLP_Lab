@@ -41,7 +41,6 @@ try:
     free, total = torch.cuda.mem_get_info(0)            # exactly what accelerate probes
     print(f"GPU SELF-TEST OK | {torch.cuda.get_device_name(0)} | "
           f"free {free/1e9:.1f} / {total/1e9:.1f} GB | compute={val:.0f}")
-    ecc = torch.cuda.cuda_version  # touch driver; informational only
     sys.exit(0)
 except Exception as e:
     print("GPU SELF-TEST FAILED:", repr(e))
