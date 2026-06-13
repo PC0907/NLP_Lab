@@ -47,13 +47,14 @@ class FieldExtraction:
     Attributes:
         path: JSON path (list of keys/indices). Same as FieldLocation.path.
         path_str: Dotted string form, e.g. "workExperience.0.employer".
-            Convenient for use as a dict key, filename, or log line.
         value: The extracted value (primitive: str/int/float/bool/None).
         is_empty: Whether the value was empty/null in the model's output.
         token_span: (start, end) token indices, end-exclusive.
-        activations: {layer_index: array of shape (hidden_dim,)}.
-            One vector per layer, taken at the position specified by the
-            extractor's `position` strategy (e.g., last token of the value).
+        activations: {layer_index: array}.
+            For position in {"last_token","mean"}: a 1D array (hidden_dim,).
+            For position == "all_tokens": a 2D array (span_len, hidden_dim) —
+            every token's vector in the field's span, enabling span-max (and
+            last/mean) to be computed downstream from a single extraction.
     """
 
     path: list[str | int]
@@ -75,16 +76,12 @@ class ExtractionResult:
         generated_token_count: Number of tokens generated.
         finish_reason: Why generation stopped ("stop", "length", "error").
         elapsed_seconds: Wall-clock time for generation.
-        raw_generated_text: The full string the model generated, before any
-            stripping. Saved for debugging and analysis.
+        raw_generated_text: The full string the model generated.
         parsed_json: The parsed JSON object (None if parsing failed).
         parse_error: Error message if parsing failed, else None.
-        token_logprobs: Per-generated-token log-probabilities. Used by the
-            token-logprob baseline.
-        fields: Per-field extractions with activations. Empty if parsing
-            failed.
-        captured_layers: The layer indices at which activations were
-            captured. Stored so downstream stages know what's available.
+        token_logprobs: Per-generated-token log-probabilities.
+        fields: Per-field extractions with activations.
+        captured_layers: The layer indices at which activations were captured.
     """
 
     doc_id: str
@@ -116,25 +113,21 @@ class Extractor:
     Args:
         llm: An LLM implementation (e.g., HuggingFaceLLM).
         layers: Layer indices to capture activations from.
-        position: Which position within a field's token span to read the
-            activation from. Currently supports:
-              - "last_token": the activation at the field's last token
-                  (most common, captures the model's "final" representation
-                  of the value)
-              - "mean": elementwise mean across all tokens in the field's span
+        position: Which position(s) within a field's token span to read the
+            activation from:
+              - "last_token": activation at the field's last token (1 vector).
+              - "mean": elementwise mean across the field's tokens (1 vector).
+              - "all_tokens": EVERY token's vector in the span (2D array).
+                  Enables span-max scoring (Obeso et al. 2025) and lets
+                  last/mean/max all be computed downstream from one extraction.
+                  Costs more storage (~span_len x the size).
         max_new_tokens: Cap on tokens per generation.
         temperature: Sampling temperature (0 = greedy).
         top_p: Nucleus sampling parameter (used only if temperature > 0).
         include_schema: Whether to include the schema in the prompt.
-
-    Notes:
-        - The Extractor does NOT save anything to disk. It returns
-          ExtractionResult objects for the caller to persist.
-        - One LLM is shared across calls; do not construct a new Extractor
-          for each document (model reload is expensive).
     """
 
-    SUPPORTED_POSITIONS = ("last_token", "mean")
+    SUPPORTED_POSITIONS = ("last_token", "mean", "all_tokens")
 
     def __init__(
         self,
@@ -163,8 +156,6 @@ class Extractor:
         self.include_schema = include_schema
         self.max_input_chars = max_input_chars
 
-        # Sanity-check requested layers against the model up-front so we fail
-        # before the first expensive forward pass.
         for ℓ in self.layers:
             if not (1 <= ℓ <= self.llm.num_layers):
                 raise ValueError(
@@ -175,7 +166,7 @@ class Extractor:
     # ------------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------------
-    #Only necessary because of CUDA OOM Error. Can comment this out, with more computation
+    # Only necessary because of CUDA OOM Error. Can disable via max_input_chars=0.
     def _truncate_document_text(self, text: str) -> str:
         """Truncate document text. Set max_input_chars=0 in config to disable."""
         if self.max_input_chars <= 0 or len(text) <= self.max_input_chars:
@@ -186,17 +177,10 @@ class Extractor:
             len(text), len(truncated), len(truncated) // 4,
         )
         return truncated
-    
-    def extract(self, doc: Document) -> ExtractionResult:
-        """Run extraction on a single document.
 
-        Returns an ExtractionResult regardless of success/failure. Failures
-        produce a result with parse_error set and an empty fields list, so
-        the caller can save partial state and report consistently.
-        """
+    def extract(self, doc: Document) -> ExtractionResult:
+        """Run extraction on a single document."""
         if doc.extraction_error is not None:
-            # Document had no usable text (image-only PDF, etc.). We don't
-            # run the model in this case — there's nothing to extract from.
             logger.info(
                 "Skipping %s (no document text: %s)",
                 doc.doc_id, doc.extraction_error,
@@ -215,10 +199,8 @@ class Extractor:
                 captured_layers=list(self.layers),
             )
 
-        # ------ Truncate document text if needed ------
         document_text = self._truncate_document_text(doc.text)
 
-        # ------ Build prompt ------
         system_msg, user_msg = build_extraction_prompt(
             schema=doc.schema,
             document_text=document_text,
@@ -226,7 +208,6 @@ class Extractor:
         )
         prompt = self.llm.format_chat(system_msg, user_msg)
 
-        # ------ Run model ------
         logger.info("Extracting %s (text=%d chars)", doc.doc_id, len(doc.text))
         start = time.perf_counter()
         gen_output = self.llm.generate_with_activations(
@@ -247,19 +228,14 @@ class Extractor:
             gen_output.finish_reason,
         )
 
-        # ------ Parse JSON ------
-        # ------ DEBUG: see what the model actually produced ------
         logger.info("=== RAW GENERATED TEXT (first 2000 chars) ===")
         logger.info(repr(gen_output.text[:2000] if gen_output.text else gen_output.text))
         logger.info("=== END RAW TEXT ===")
-        logger.info("Generated token IDs (first 20): %s", gen_output.generated_token_ids[:20])
         logger.info("Total generated tokens: %d", len(gen_output.generated_token_ids))
-        
+
         parsed_json, parse_error, json_text = parse_json_output(gen_output.text)
         if parsed_json is None:
-            logger.warning(
-                "JSON parse failed for %s: %s", doc.doc_id, parse_error,
-            )
+            logger.warning("JSON parse failed for %s: %s", doc.doc_id, parse_error)
             return ExtractionResult(
                 doc_id=doc.doc_id,
                 domain=doc.domain,
@@ -274,7 +250,6 @@ class Extractor:
                 captured_layers=list(self.layers),
             )
 
-        # ------ Locate fields in tokens ------
         per_token_strings = self.llm.decode_per_token(gen_output.generated_token_ids)
         try:
             field_locations = locate_fields(
@@ -284,13 +259,9 @@ class Extractor:
                 per_token_strings=per_token_strings,
             )
         except Exception as e:
-            # Localization is best-effort; if it crashes (e.g., due to a
-            # weird JSON shape), we still return the parsed result without
-            # field-level activations.
             logger.exception("Field localization failed for %s: %s", doc.doc_id, e)
             field_locations = []
 
-        # ------ Slice activations per field ------
         fields = self._slice_activations(
             field_locations=field_locations,
             hidden_states=gen_output.hidden_states or {},
@@ -316,6 +287,21 @@ class Extractor:
     # Internal: activation slicing
     # ------------------------------------------------------------------------
 
+    def _reduce(self, span: np.ndarray) -> np.ndarray:
+        """Reduce a (span_len, hidden_dim) array to the configured representation.
+
+        - last_token -> (hidden_dim,)   last row
+        - mean       -> (hidden_dim,)   mean over rows (fp32 accumulate)
+        - all_tokens -> (span_len, hidden_dim)  unchanged (every token kept)
+        """
+        if self.position == "last_token":
+            return span[-1]
+        if self.position == "mean":
+            return span.astype(np.float32).mean(axis=0).astype(np.float16)
+        if self.position == "all_tokens":
+            return span.astype(np.float16)
+        raise AssertionError(f"Unhandled position: {self.position}")
+
     def _slice_activations(
         self,
         *,
@@ -323,31 +309,27 @@ class Extractor:
         hidden_states: dict[int, np.ndarray],
         num_generated: int,
     ) -> list[FieldExtraction]:
-        """For each field, extract a single hidden-state vector per layer.
+        """For each field, extract its hidden-state representation per layer.
 
-        Each layer in `hidden_states` has shape (num_generated, hidden_dim).
-        For each field with token span [start, end), we select position(s)
-        within that span according to self.position and reduce to a single
-        vector per layer.
+        Each layer in `hidden_states` has shape (n_steps, hidden_dim). For each
+        field with token span [start, end), we clamp to the available steps and
+        reduce according to self.position (see _reduce).
         """
         fields: list[FieldExtraction] = []
         for loc in field_locations:
-            # Defensive bounds — a logic bug in the locator could produce
-            # out-of-range indices; we'd rather log and skip than crash.
             start = max(0, min(loc.start_token_idx, num_generated - 1))
             end = max(start + 1, min(loc.end_token_idx, num_generated))
 
             per_layer_vec: dict[int, np.ndarray] = {}
             for ℓ, layer_array in hidden_states.items():
-                # layer_array shape: (n_steps_with_activations, hidden_dim).
-                # n_steps_with_activations may be slightly smaller than
-                # num_generated when the final step (EOS) has no hidden
-                # state. We handle this by clamping the field's token span
-                # to within the available activations rather than skipping.
+                # The final step (EOS) may lack a hidden state, so n_avail can
+                # be slightly below num_generated. Clamp the span to what's
+                # available rather than skipping.
                 n_avail = layer_array.shape[0]
-                clamped_start = min(start, n_avail - 1) if n_avail > 0 else 0
+                if n_avail <= 0:
+                    continue
+                clamped_start = min(start, n_avail - 1)
                 clamped_end = min(end, n_avail)
-
                 if clamped_end <= clamped_start:
                     logger.debug(
                         "Layer %d: field %s span [%d,%d) outside available "
@@ -360,32 +342,9 @@ class Extractor:
                 if span.size == 0:
                     continue
 
-                if self.position == "last_token":
-                    vec = span[-1]
-                elif self.position == "mean":
-                    vec = span.astype(np.float32).mean(axis=0).astype(np.float16)
-                else:
-                    raise AssertionError(f"Unhandled position: {self.position}")
-
-                per_layer_vec[ℓ] = vec
-                span = layer_array[start:end]  # (span_len, hidden_dim)
-                if span.size == 0:
-                    continue
-
-                if self.position == "last_token":
-                    vec = span[-1]
-                elif self.position == "mean":
-                    # Cast to float32 for the mean to avoid fp16 underflow,
-                    # then back to fp16 for storage consistency.
-                    vec = span.astype(np.float32).mean(axis=0).astype(np.float16)
-                else:
-                    raise AssertionError(f"Unhandled position: {self.position}")
-
-                per_layer_vec[ℓ] = vec
+                per_layer_vec[ℓ] = self._reduce(span)
 
             if not per_layer_vec:
-                # Couldn't produce any layer's activation; drop the field
-                # rather than emit a bogus empty-activations record.
                 logger.warning(
                     "No activations produced for field %s; skipping.", loc.path,
                 )
@@ -409,7 +368,5 @@ class Extractor:
 # ============================================================================
 
 def _path_to_string(path: list[str | int]) -> str:
-    """Convert a JSON path to a dotted string, e.g.,
-    ['workExperience', 0, 'employer'] -> 'workExperience.0.employer'.
-    """
+    """['workExperience', 0, 'employer'] -> 'workExperience.0.employer'."""
     return ".".join(str(p) for p in path)
