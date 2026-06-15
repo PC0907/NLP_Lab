@@ -17,6 +17,13 @@ so we show the strict number too rather than silently swapping. Per the
 pre-registration logic, a matcher change is justified only if an audit shows
 >25% of a field's errors are matcher artefacts — these numbers feed that audit.
 
+Value normalization: a regenerated JSON string can keep stray surrounding
+quotes (e.g. abstract -> '"As one of ..."'), which is the SAME value as
+'As one of ...'. We strip ONE matched surrounding quote pair before comparison
+in BOTH modes. This is a parsing artefact fix, not leniency -- it does not
+touch internal content, so genuine differences (e.g. a merged "a,b"@x email)
+are NOT masked.
+
 Usage:
   python scripts/rescore_regen.py \
       --domain qwen35_4b_credit \
@@ -40,6 +47,25 @@ from probe_extraction.labeling.value_compare import compare_values, ComparisonSt
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
+
+
+# ---- value normalization (parsing-artefact fix, applied in BOTH modes) ----
+
+def _strip_surrounding_quotes(v):
+    """Strip exactly ONE matched surrounding quote pair from a string value.
+
+    Fixes the regenerated-JSON-string artefact where quotes survived parsing
+    ('"abstract text"' -> 'abstract text'). Conservative: only acts on a
+    cleanly matched leading/trailing pair, so it cannot mask a genuine internal
+    difference (e.g. '"a,b"@x.com' is left untouched -- the quote is not a
+    surrounding pair). Non-strings pass through unchanged.
+    """
+    if not isinstance(v, str):
+        return v
+    s = v.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("\"", "'"):
+        s = s[1:-1].strip()
+    return s
 
 
 # ---- lenient matcher pieces ----
@@ -73,6 +99,9 @@ def _synonym_equal(g, n) -> bool:
 
 
 def strict_ok(gold, new) -> bool:
+    # normalize surrounding quotes on both sides first (parsing-artefact fix)
+    gold = _strip_surrounding_quotes(gold)
+    new = _strip_surrounding_quotes(new)
     try:
         return bool(compare_values(gold, new, strategy=ComparisonStrategy.AUTO,
                                    number_tolerance=0.0))
@@ -83,6 +112,8 @@ def strict_ok(gold, new) -> bool:
 def lenient_ok(gold, new) -> bool:
     if strict_ok(gold, new):
         return True
+    gold = _strip_surrounding_quotes(gold)
+    new = _strip_surrounding_quotes(new)
     if gold is None or new is None:
         return False
     if _synonym_equal(gold, new):
@@ -127,7 +158,10 @@ def probe_scores(domain: str, probe, layer: int) -> dict:
             for l in d["labels"]:
                 key = f"{l['path_str']}__layer{layer}"
                 if key in acts:
-                    s = float(probe.score(acts[key][None, :].astype(np.float32))[0])
+                    vec = acts[key]
+                    if vec.ndim > 1:           # all-tokens activations -> last token
+                        vec = vec[-1]
+                    s = float(probe.score(vec[None, :].astype(np.float32))[0])
                     out[(doc_id, l["path_str"])] = s
     return out
 
