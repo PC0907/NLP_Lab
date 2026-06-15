@@ -34,7 +34,7 @@ model:
   quantization: "none"
   device_map: "auto"
   trust_remote_code: false
-  max_new_tokens: 16384
+  max_new_tokens: 6144
   temperature: 0.0
   top_p: 1.0
 
@@ -60,7 +60,7 @@ extraction:
   prompt_template: "default"
   include_schema: true
   include_examples: false
-  max_input_chars: 600000
+  max_input_chars: 50000
 
 labeling:
   strategy: "strict"

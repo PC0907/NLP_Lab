@@ -335,6 +335,7 @@ class HuggingFaceLLM(LLM):
             "eos_token_id": eos_ids if eos_ids else None,
             "return_dict_in_generate": True,
         }
+        gen_kwargs["repetition_penalty"] = 1.2
         if do_sample:
             gen_kwargs["temperature"] = temperature
             gen_kwargs["top_p"] = top_p

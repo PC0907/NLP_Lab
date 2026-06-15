@@ -123,9 +123,26 @@ def parse_json_output(generated_text: str) -> tuple[dict[str, Any] | None, str |
     try:
         return json.loads(candidate), None, candidate
     except json.JSONDecodeError as e:
+        repaired = _try_repair_json(candidate)
+        if repaired is not None:
+            return repaired, None, candidate
         return None, f"JSONDecodeError: {e}", candidate
     except (TypeError, ValueError) as e:
         return None, f"{type(e).__name__}: {e}", candidate
+    
+def _try_repair_json(candidate: str) -> dict[str, Any] | None:
+    """Best-effort recovery of malformed-but-complete JSON via optional
+    json-repair. Returns None if the library isn't installed or repair fails,
+    leaving the document a parse failure (unchanged behaviour)."""
+    try:
+        from json_repair import repair_json
+    except Exception:
+        return None
+    try:
+        obj = repair_json(candidate, return_objects=True)
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
 
 def locate_fields(
     *,
@@ -227,14 +244,20 @@ def _strip_to_json(text: str) -> str:
 
     # 0: Strip any <think>...</think> blocks
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    
-    if "</think>" in text:
-        text = text.rsplit("</think>", 1)[-1].strip()
 
-    # 1 & 2: fenced code block
+    # 0b: Dangling </think> with no opening tag (DeepSeek-R1 quirk).
+    if "</think>" in text:
+        text = text.split("</think>")[-1].strip()
+
+    # 1 & 2: fenced code block (properly closed ```...```)
     m = _FENCE_RE.search(text)
     if m:
         return m.group(1).strip()
+
+    # 2b: opening fence but truncated/unclosed.
+    fence_open = re.search(r"```(?:json)?\s*\n?", text)
+    if fence_open:
+        text = text[fence_open.end():].strip()
 
     # 3: brace-counted extraction
     first_brace = text.find("{")
@@ -242,9 +265,12 @@ def _strip_to_json(text: str) -> str:
         extracted = _extract_balanced_braces(text, first_brace)
         if extracted is not None:
             return extracted
+        # 3b: braces never balanced (truncated) -> hand tail to json_repair.
+        return text[first_brace:]
 
     # 4: fall through
     return text
+
 def _extract_balanced_braces(text: str, start: int) -> str | None:
     """Return the substring from `start` through the matching closing brace.
 
