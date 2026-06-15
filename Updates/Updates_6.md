@@ -1,12 +1,5 @@
-# Weekly Update — Methodology Hardening & Span Aggregation
+# Weekly Update 
 
-_Probe-based trust signals · Team #9 · ExtractBench · week of 9–15 June 2026_
-
-This week focused on making the pipeline rigorous (the "make it perfect" ask):
-removing a layer-selection bias from the headline number, implementing and
-testing the span-max aggregation from Obeso et al. (2025), completing the
-remaining baselines, and fixing a regeneration prompt bug. Two of the headline
-results are honest *negative / modest* findings, which we report transparently.
 
 ---
 
