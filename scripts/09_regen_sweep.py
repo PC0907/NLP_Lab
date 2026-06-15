@@ -85,14 +85,16 @@ CORRECTION_SYSTEM = (
     "a partially-extracted record with ONE field left blank. Fill in ONLY the "
     "blank field, using the document. Be precise and conservative; do not "
     "invent information. If the field is genuinely not in the document, return "
-    "null. Output ONLY the JSON value for the blank field."
+    "null. Output ONLY the JSON value for the blank field -- a single value, "
+    "never a list or object unless the field's type is explicitly a list."
 )
 
+# Note the new {position_hint} and {single_value_rule} slots.
 CORRECTION_USER = """A record was extracted from the document below, but one field needs to be re-derived.
 
 # The record so far (one field blanked out as <FILL_THIS>)
 {context_obj}
-
+{position_hint}
 # Field to fill
 Key: {field_key}
 Description: {description}
@@ -105,40 +107,96 @@ Type: {type_str}
 # Instructions
 - Determine ONLY the value of "{field_key}" from the document.
 - Use the surrounding record fields above to locate the right place in the document.
-- Output ONLY the JSON value (e.g. "200m", 1947, null). No keys, no markdown, no other text.
+{single_value_rule}- Output ONLY the JSON value (e.g. "200m", 1947, null). No keys, no markdown, no other text.
 
 # Output
 
 """
 
 
+def _parse_segments(path_str):
+    """Split a dotted path into typed segments (int for indices)."""
+    segs = []
+    for seg in path_str.split("."):
+        segs.append(int(seg) if seg.lstrip("-").isdigit() else seg)
+    return segs
+
+
 def _parent_and_key(parsed_json, path_str):
-    """Navigate parsed_json to the PARENT object of path_str, return
-    (parent_obj, leaf_key). Handles dotted paths with numeric indices."""
-    segs = path_str.split(".")
+    """Navigate parsed_json to the PARENT of path_str.
+
+    Returns (parent_obj, leaf_key, list_info) where list_info is None for a
+    plain object field, or a dict describing the list-element context:
+        {"list_name": <name of the list field>,
+         "index": <0-based index>,
+         "length": <len of the list, if known>}
+    so the caller can tell the model exactly which element it is filling.
+    """
+    segs = _parse_segments(path_str)
     node = parsed_json
-    for seg in segs[:-1]:
+    list_info = None
+
+    for i, seg in enumerate(segs[:-1]):
         if isinstance(node, list):
-            node = node[int(seg)]
+            idx = int(seg)
+            list_name = segs[i - 1] if i >= 1 else "(list)"
+            list_info = {
+                "list_name": str(list_name),
+                "index": idx,
+                "length": len(node),
+            }
+            if not (0 <= idx < len(node)):
+                return None, segs[-1], list_info
+            node = node[idx]
         elif isinstance(node, dict):
             node = node.get(seg, {})
         else:
-            return None, segs[-1]
-    return node, segs[-1]
+            return None, segs[-1], list_info
+
+    return node, segs[-1], list_info
 
 
 def build_correction_prompt(doc, parsed_json, path_str, field_node):
-    """Build the correction-with-context prompt for one field."""
-    parent, key = _parent_and_key(parsed_json, path_str)
-    # Build a context object: the parent dict with the target field blanked.
+    """Build the correction-with-context prompt for one field.
+
+    For list elements (e.g. authors.1.name) the prompt now states the exact
+    position and forbids returning the whole list.
+    """
+    parent, key, list_info = _parent_and_key(parsed_json, path_str)
+
+    # Context object: the parent (single element, if a list member) with the
+    # target field blanked. _parent_and_key already resolves to the individual
+    # element for list paths, so `parent` is one author object, not the list.
     if isinstance(parent, dict):
         ctx = dict(parent)
         ctx[key] = "<FILL_THIS>"
     else:
         ctx = {key: "<FILL_THIS>"}
     context_obj = json.dumps(ctx, ensure_ascii=False, indent=2)[:1500]
+
+    # Position hint + single-value rule: only present for list-element targets.
+    position_hint = ""
+    single_value_rule = ""
+    if list_info is not None:
+        human_pos = list_info["index"] + 1  # 1-based for readability
+        length = list_info.get("length")
+        of_n = f" of {length}" if length else ""
+        position_hint = (
+            f"\n# Which item\n"
+            f"You are filling the \"{key}\" of item #{human_pos}{of_n} "
+            f"(0-based index {list_info['index']}) in the \"{list_info['list_name']}\" list. "
+            f"The blanked record above is that ONE item -- not the whole list.\n"
+        )
+        single_value_rule = (
+            f"- Return the \"{key}\" for THIS ONE item only (item #{human_pos}). "
+            f"Do NOT return the whole \"{list_info['list_name']}\" list or multiple values -- "
+            f"exactly one {field_node.get('type', 'value')}.\n"
+        )
+
     return CORRECTION_USER.format(
         context_obj=context_obj,
+        position_hint=position_hint,
+        single_value_rule=single_value_rule,
         field_key=key,
         description=field_node.get("description", "(no description)"),
         type_str=field_node.get("type", "(unspecified)"),
@@ -194,7 +252,10 @@ def load_candidates(cfg, probe, layer, include_correct):
                 key = f"{ps}__layer{layer}"
                 if key not in acts:
                     continue
-                score = float(probe.score(acts[key][None, :].astype(np.float32))[0])
+                vec = acts[key]
+                if vec.ndim > 1:        # all-tokens activations: use last token
+                    vec = vec[-1]
+                score = float(probe.score(vec[None, :].astype(np.float32))[0])
                 # logprob baseline score (min logprob over the field span)
                 min_lp = float("nan")
                 span = spans.get(ps)
