@@ -151,15 +151,20 @@ def main() -> int:
             logger.warning("No gold for %s; skipping", doc_id)
             continue
 
-        result = label_extraction(
-            doc_id=doc_id,
-            domain=domain,
-            schema=schema_by_domain[domain],
-            gold=gold_by_id[doc_id],
-            extracted=ext["parsed_json"],
-            fuzzy_threshold=cfg.labeling.fuzzy_threshold,
-            number_tolerance=cfg.labeling.number_tolerance,
-        )
+        try:
+            result = label_extraction(
+                doc_id=doc_id,
+                domain=domain,
+                schema=schema_by_domain[domain],
+                gold=gold_by_id[doc_id],
+                extracted=ext["parsed_json"],
+                fuzzy_threshold=cfg.labeling.fuzzy_threshold,
+                number_tolerance=cfg.labeling.number_tolerance,
+            )
+        except (RecursionError, Exception) as e:
+            logger.warning("Skipping %s (labeling failed: %s: %s)",
+                           doc_id, type(e).__name__, e)
+            continue
         save_labels(result, labels_dir)
         results.append(result)
         logger.info(
