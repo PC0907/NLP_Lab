@@ -81,7 +81,7 @@ _SYNONYMS = [
 # Leaf field names whose values are long free-text clauses that exact-match
 # scoring cannot fairly judge. Excluded from the LENIENT score.
 _UNSCORABLE = {
-    "borrowing_request", "use_of_proceeds", "authorized_officer_definition", "abstract"
+    "borrowing_request", "use_of_proceeds", "authorized_officer_definition",
     # add domain-specific long-text leaves here as the audit identifies them
 }
 
@@ -125,8 +125,19 @@ def lenient_ok(gold, new) -> bool:
     return False
 
 
-def is_scorable_lenient(path_str: str) -> bool:
-    return path_str.split(".")[-1] not in _UNSCORABLE
+# Long free-text fields cannot be fairly judged by exact match. We exclude a
+# field from LENIENT scoring if EITHER its leaf name is a known long-text field
+# OR its gold value exceeds this many characters (a type-based rule, not a
+# hand-picked list -- this auto-catches abstracts, legal clauses, etc.).
+_LONG_TEXT_CHARS = 80
+
+def is_scorable_lenient(path_str: str, gold_value=None) -> bool:
+    leaf = path_str.split(".")[-1]
+    if leaf in _UNSCORABLE:
+        return False
+    if gold_value is not None and len(str(gold_value)) > _LONG_TEXT_CHARS:
+        return False  # long free-text: not exact-match scorable
+    return True
 
 
 # ---- load labels + probe scores ----
@@ -184,9 +195,9 @@ def evaluate(cache, labels, pscores, mode: str):
         lab = labels.get((doc_id, path))
         if lab is None:
             continue
-        if mode == "lenient" and not is_scorable_lenient(path):
-            continue  # drop unscorable long clauses in lenient mode
         gold = lab.get("gold_value")
+        if mode == "lenient" and not is_scorable_lenient(path, gold):
+            continue  # drop unscorable long free-text fields in lenient mode
         was_err = int(lab.get("is_error", 0)) == 1
         now_ok = ok(gold, entry["new_value"])
         if was_err and now_ok:
