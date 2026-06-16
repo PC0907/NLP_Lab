@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import sys
+sys.setrecursionlimit(20000)
 from pathlib import Path
 from typing import Any
 
