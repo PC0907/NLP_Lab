@@ -81,7 +81,7 @@ _SYNONYMS = [
 # Leaf field names whose values are long free-text clauses that exact-match
 # scoring cannot fairly judge. Excluded from the LENIENT score.
 _UNSCORABLE = {
-    "borrowing_request", "use_of_proceeds", "authorized_officer_definition",
+    "borrowing_request", "use_of_proceeds", "authorized_officer_definition", "abstract"
     # add domain-specific long-text leaves here as the audit identifies them
 }
 
