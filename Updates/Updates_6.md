@@ -225,14 +225,3 @@ Result pending.
 | Docling vs PyMuPDF gold-coverage | equivalent | Tested null; retain PyMuPDF |
 
 ---
-
-## Next steps
-
-- Finish pooled regeneration (running) → rescore → the generalization number.
-- Sampling-based regeneration (regenerate N times, pick best) — decide the
-  selection criterion (majority vote / probe-scored / model self-pick).
-- Re-run fixability with the improved matcher (the `_normalize` fix affects it too),
-  so fixability and coverage numbers use one consistent matcher.
-- Off-by-one list-element residual → constrained decoding (future work).
-- Pre-registered audit protocol document (formalize the 50/25/25 thresholds,
-  retroactively justify exclusions and the lenient-matcher decision).
