@@ -118,6 +118,30 @@ class LabelingResult:
 # Public entry point
 # ============================================================================
 
+# Documents whose JSON nests deeper than this are degenerate model outputs.
+# Walking them blows Python's recursion limit (and risks a C-stack crash),
+# so we skip them instead of crashing the whole job.
+MAX_JSON_DEPTH = 120
+
+
+def _json_depth(obj: Any) -> int:
+    """Maximum nesting depth of a JSON-like object, computed iteratively so
+    it cannot itself hit the recursion limit."""
+    max_depth = 0
+    stack = [(obj, 1)]
+    while stack:
+        node, d = stack.pop()
+        if d > max_depth:
+            max_depth = d
+        if isinstance(node, dict):
+            for v in node.values():
+                stack.append((v, d + 1))
+        elif isinstance(node, list):
+            for v in node:
+                stack.append((v, d + 1))
+    return max_depth
+
+
 def label_extraction(
     *,
     doc_id: str,
@@ -196,6 +220,22 @@ class Matcher:
         labels: list[FieldLabel] = []
         unmatched_gold: list[list[str | int]] = []
         unmatched_extracted: list[list[str | int]] = []
+
+        # Guard: skip degenerate, pathologically-deep model outputs rather than
+        # crash the whole job on a RecursionError.
+        depth = max(_json_depth(gold), _json_depth(extracted))
+        if depth > MAX_JSON_DEPTH:
+            logger.warning(
+                "Skipping %s: JSON nesting depth %d exceeds MAX_JSON_DEPTH=%d "
+                "(degenerate output); document dropped from labeling.",
+                doc_id, depth, MAX_JSON_DEPTH,
+            )
+            return LabelingResult(
+                doc_id=doc_id, domain=domain, labels=[],
+                n_total=0, n_errors=0, n_hallucinations=0,
+                n_omissions=0, n_value_mismatches=0, n_type_mismatches=0,
+                unmatched_gold_paths=[], unmatched_extracted_paths=[],
+            )
 
         self._walk(
             schema=self.schema,
