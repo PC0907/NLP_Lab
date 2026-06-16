@@ -63,14 +63,46 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _normalize(s: str) -> str:
-    """Lowercase, collapse whitespace, strip common punctuation — for a
-    tolerant substring search of the gold value in the document text."""
-    s = s.lower()
-    s = s.replace(",", "").replace("$", "")
-    s = re.sub(r"\s+", " ", s)
-    return s.strip()
+# =============================================================================
+# REPLACEMENT for _normalize() in scripts/08_fixability_filter.py
+# (08b_gold_coverage.py imports this, so fixing it here fixes both.)
+#
+# Add  `import html`  near the top of 08_fixability_filter.py (re is already
+# imported). Then replace the existing _normalize with the version below.
+#
+# Why: the old _normalize handled PyMuPDF's clean text but not Docling's
+# markdown/entity artifacts, unfairly scoring Docling gold-coverage too low:
+#   - HTML entities:   "AT&amp;T"          vs gold "AT&T"
+#   - soft hyphens:    "hand\xad written"  (line-break hyphenation) vs "handwritten"
+#   - unicode dashes:  \u2010-\u2015,\u2212 vs ascii "-"
+#   - irregular spaces:"J. S.  Denker"      (double space) vs "J. S. Denker"
+# Applied identically to gold and document text, so the comparison is fair
+# across parsers.
+# =============================================================================
 
+# unicode dash variants -> ascii hyphen
+_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+_SOFT_HYPHEN = "\u00ad"
+
+
+def _normalize(s: str) -> str:
+    """Lowercase, decode HTML entities, join soft-hyphen line breaks, unify
+    dashes, strip formatting punctuation, and collapse ALL whitespace -- a
+    tolerant search that is fair across PyMuPDF (clean) and Docling
+    (markdown/entities)."""
+    import html
+    import re
+    s = str(s)
+    s = html.unescape(s)            # &amp; -> &  (Docling markdown)
+    s = s.lower()
+    # soft hyphen = line-break hyphenation; remove it AND any whitespace right
+    # after it so "hand\xad written" -> "handwritten"
+    s = re.sub(_SOFT_HYPHEN + r"\s*", "", s)
+    for d in _DASHES:               # unify unicode dashes to ascii hyphen
+        s = s.replace(d, "-")
+    s = s.replace(",", "").replace("$", "")   # formatting / currency
+    s = re.sub(r"\s+", " ", s)      # collapse all whitespace runs
+    return s.strip()
 
 def value_in_text(gold_value, document_text_norm: str, max_value_len: int) -> tuple[bool, str]:
     """Return (present, method). Tolerant check for whether the gold value
