@@ -59,6 +59,11 @@ schema_for_path = _regen_single.schema_for_path
 
 logger = logging.getLogger(__name__)
 BEST_LAYER = 18
+# Cap document text in the correction prompt to stay under the model's
+# context window (262144 tokens). ~4 chars/token, leave headroom for the
+# schema + context overhead -> ~800k chars is safe; use 600k to match the
+# extraction config's max_input_chars.
+MAX_DOC_CHARS = 600000
 
 
 def parse_args() -> argparse.Namespace:
@@ -193,6 +198,14 @@ def build_correction_prompt(doc, parsed_json, path_str, field_node):
             f"exactly one {field_node.get('type', 'value')}.\n"
         )
 
+    # Truncate document text so the correction prompt never exceeds the model's
+    # context window. The full document is not needed to re-derive one field;
+    # very long docs (e.g. 264k-token credit agreements) overflow the 262144
+    # context and crash generation. Cap conservatively (chars ~ 4x tokens).
+    doc_text = doc.text
+    if len(doc_text) > MAX_DOC_CHARS:
+        doc_text = doc_text[:MAX_DOC_CHARS]
+
     return CORRECTION_USER.format(
         context_obj=context_obj,
         position_hint=position_hint,
@@ -200,7 +213,7 @@ def build_correction_prompt(doc, parsed_json, path_str, field_node):
         field_key=key,
         description=field_node.get("description", "(no description)"),
         type_str=field_node.get("type", "(unspecified)"),
-        document_text=doc.text,
+        document_text=doc_text,
     )
 
 
