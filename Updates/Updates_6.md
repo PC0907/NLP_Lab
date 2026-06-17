@@ -243,6 +243,62 @@ verifier but using internal states) — is the next experiment.
 
 ---
 
+## 7b. Error-cause analysis — WHY does the model fail / regeneration break things?
+
+We had never characterized the errors themselves (only detected/repaired them).
+Inspecting the regeneration breaks revealed FOUR distinct mechanisms, and the
+striking finding is how few are genuine model errors — in every case below the
+ORIGINAL extraction was correct and regeneration broke it:
+
+1. **Quote / format artifacts** (e.g. gold `pascual@cnb.csic.es` → regen
+   `"pascual"@cnb.csic.es`; `%` → `"%`). Stray quotes from JSON-string output;
+   the value is correct. A *scoring* artifact, not a model error. Rare; residual.
+
+2. **Schema-convention failures — described fields** (e.g. `unit` gold `USD` →
+   regen `millions`). The model put the *scale* word in the *unit* field. The
+   schema DOES describe `unit` ("Currency or measurement unit, e.g. USD, EUR, %")
+   — but the correction prompt wasn't surfacing that description. Fixable by
+   injecting the schema description.
+
+3. **List-element index failure** (e.g. `authors.4.name` gold `Xiaolei Wang` →
+   regen `Junyi Li`, which is author #0). The model defaults to the FIRST element
+   because nothing in the prompt distinguishes "item #4" from any other author —
+   the blanked object had no identifying siblings. Fixable by populating the
+   element's sibling fields as an identity anchor.
+
+4. **Schema-convention failures — UNDOCUMENTED fields** (e.g. `scale` gold
+   `1000000` → regen `1m`/`1`/`23`; `value` gold `24335.6` → regen `24335600`).
+   The schema gives `scale`/`value` only a type, NO description — so the
+   benchmark's encoding convention (value = as-reported number, scale = multiplier;
+   EPS scale=1 but balance-sheet scale=1000000) is **not documented anywhere** and
+   the model cannot infer it. These are **benchmark-annotation artifacts, not
+   model errors** — no fair prompt fix exists, because the information isn't in the
+   schema. This is significant: 10kq has ~9099 fields, so a substantial share of
+   "financial errors" are undocumented-convention mismatches, inflating the error
+   rate and capping regeneration on these domains.
+
+**Unifying diagnosis:** regeneration breaks fields because the single-field
+correction prompt is *context-impoverished relative to the original joint
+extraction* — terser schema, isolated list element, lost positional sequence. The
+fix is to restore that context, not to change the model or temperature.
+
+**Fix implemented (enriched correction prompt), v2 run pending:**
+- Inject each field's full schema description / examples / matching convention
+  (fixes mechanism 2; honestly shows "(none in schema)" for undocumented fields —
+  we do NOT invent conventions).
+- Keep list-element siblings populated as an identity anchor (fixes mechanism 3;
+  incidentally the populated sibling `scale` demonstrates the convention by example,
+  partially helping mechanism 4).
+The fixes are **schema-driven, not per-domain hardcoded** — the same logic builds
+the prompt for any field in any domain (and, being schema-based, should transfer
+across datasets, bounded by each dataset's schema-documentation quality). A v2
+pooled regeneration with the enriched prompt is queued; predictions: unit + list
+breaks drop sharply, scale/value breaks drop partially (sibling-by-example) but
+persist (undocumented). Break count (v1 lenient = 354) and safe-override net
+(v1 held-out = +44) to be compared.
+
+---
+
 ## 8. Honest status of the headline numbers
 
 | Quantity | Number | Status |
@@ -261,11 +317,21 @@ verifier but using internal states) — is the next experiment.
 
 ## Next steps
 
-- Finish pooled regeneration (running) → rescore → the generalization number.
-- Sampling-based regeneration (regenerate N times, pick best) — decide the
-  selection criterion (majority vote / probe-scored / model self-pick).
-- Re-run fixability with the improved matcher (the `_normalize` fix affects it too),
-  so fixability and coverage numbers use one consistent matcher.
-- Off-by-one list-element residual → constrained decoding (future work).
-- Pre-registered audit protocol document (formalize the 50/25/25 thresholds,
-  retroactively justify exclusions and the lenient-matcher decision).
+- **v2 pooled regeneration with the enriched prompt** (queued) → rescore + dump →
+  compare break count to v1 (354) and safe-override net to v1 (+44). Confirms (or
+  not) the context-impoverishment diagnosis.
+- **Error taxonomy across the pooled set** → quantify what fraction of errors are
+  (a) matcher/quote artifacts, (b) undocumented-convention (scale/value),
+  (c) genuine fixable model errors. This sets the real ceiling for regeneration
+  and reframes the financial error rate.
+- **Document the scale/value schema-underspecification finding** — a meaningful
+  chunk of 10kq/financial "errors" are undocumented-convention mismatches, not
+  model failures; report as a benchmark-annotation limitation.
+- Multi-sample probe-selected regeneration (probe as *selector*, safe-override
+  margin) — designed (`10_regen_select.py`); needs the activation-capture wiring
+  validated (probe trained on extraction activations; candidate activations come
+  from a different prompt — a distribution-shift check is built in).
+- Re-run fixability with the improved `_normalize` matcher (it affects fixability
+  too), so fixability / coverage / taxonomy all use one consistent matcher.
+- Pre-registered audit protocol document (formalize the thresholds, justify the
+  exclusions and the lenient-matcher decision).
