@@ -102,8 +102,8 @@ CORRECTION_USER = """A record was extracted from the document below, but one fie
 {position_hint}
 # Field to fill
 Key: {field_key}
-Description: {description}
 Type: {type_str}
+{schema_block}
 
 # Document
 
@@ -161,23 +161,51 @@ def _parent_and_key(parsed_json, path_str):
     return node, segs[-1], list_info
 
 
+def _build_schema_block(field_node):
+    """Surface the field's schema description, examples, and any evaluation
+    convention -- the context the JOINT extraction had but single-field
+    regeneration otherwise loses. Fields whose schema lacks a description
+    (e.g. underspecified `scale`/`value`) get only the type, honestly -- we do
+    NOT invent a convention that the schema does not state."""
+    lines = []
+    desc = field_node.get("description")
+    if desc:
+        lines.append(f"Description: {desc}")
+    ev = field_node.get("evaluation_config")
+    if ev:
+        lines.append(f"Matching: {ev}")
+    enum = field_node.get("enum")
+    if enum:
+        lines.append(f"Allowed values: {json.dumps(enum, ensure_ascii=False)}")
+    fmt = field_node.get("format")
+    if fmt:
+        lines.append(f"Format: {fmt}")
+    if not lines:
+        lines.append("Description: (none in schema)")
+    return "\n".join(lines)
+
+
 def build_correction_prompt(doc, parsed_json, path_str, field_node):
     """Build the correction-with-context prompt for one field.
 
-    For list elements (e.g. authors.1.name) the prompt now states the exact
-    position and forbids returning the whole list.
+    For list elements (e.g. authors.1.name) the prompt states the exact position
+    AND keeps the element's other (sibling) fields populated as an identity
+    anchor -- so the model can tell WHICH element it is filling (the author whose
+    email is X / affiliation is Y), not just "item #N". This fixes the observed
+    failure where the model defaults to the first element's value.
     """
     parent, key, list_info = _parent_and_key(parsed_json, path_str)
 
-    # Context object: the parent (single element, if a list member) with the
-    # target field blanked. _parent_and_key already resolves to the individual
-    # element for list paths, so `parent` is one author object, not the list.
+    # Context object: the parent (single element, if a list member) with ONLY the
+    # target field blanked -- siblings stay populated as an identity anchor.
     if isinstance(parent, dict):
-        ctx = dict(parent)
+        ctx = dict(parent)              # keep sibling values
         ctx[key] = "<FILL_THIS>"
     else:
         ctx = {key: "<FILL_THIS>"}
     context_obj = json.dumps(ctx, ensure_ascii=False, indent=2)[:1500]
+
+    schema_block = _build_schema_block(field_node)
 
     # Position hint + single-value rule: only present for list-element targets.
     position_hint = ""
@@ -211,7 +239,7 @@ def build_correction_prompt(doc, parsed_json, path_str, field_node):
         position_hint=position_hint,
         single_value_rule=single_value_rule,
         field_key=key,
-        description=field_node.get("description", "(no description)"),
+        schema_block=schema_block,
         type_str=field_node.get("type", "(unspecified)"),
         document_text=doc_text,
     )
