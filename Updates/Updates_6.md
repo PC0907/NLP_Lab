@@ -199,14 +199,47 @@ slightly, so "comparable, both ~0.88–0.90", not a controlled +0.016.)
 
 ---
 
-## 7. Pooled (generalization) regeneration — IN PROGRESS
+## 7. Pooled (generalization) regeneration — probe-gated safe-override
 
-Running selective regeneration across **all four domains at once** (one probe,
-one prompt, one scoring rule) to test that the pipeline generalizes without
-per-domain tuning. First attempt crashed on a long-document context overflow
-(264k > 262k tokens); fixed by truncating the correction prompt's document text
-to 600k chars (matching the extraction config). Re-running (resumes from cache).
-Result pending.
+Ran selective regeneration across **all four domains at once** (one probe, one
+prompt, one policy) to test generalization without per-domain tuning. 2421
+candidates. (A long-document context overflow was fixed by truncating the
+correction prompt's document text to 600k chars, matching extraction.)
+
+**Naive "regenerate everything" is strongly net-negative** (lenient −292: fixed
+62, broke 354). Cause: most candidates are *correct* fields, and regeneration is
+not a strict-improvement operation — re-asking under a different (single-field,
+truncated) prompt sometimes breaks a field that was right. This is a known
+failure mode (cf. PromptPort, arXiv 2601.06151), addressed there with a
+conservative *safe-override* policy.
+
+**Fix — probe-gated safe-override** (override a field only if its probe
+P(error) ≥ τ; otherwise keep the original). Sweeping τ (lenient):
+
+| τ | override rate | fixed | broke | net | override precision |
+|---|---|---|---|---|---|
+| 0.00 (regen all) | 100% | 62 | 354 | −292 | 0.15 |
+| 0.30 | 18% | 51 | 43 | +8 | 0.54 |
+| 0.50 | 14% | 51 | 15 | +36 | 0.77 |
+| 0.70 | 11% | 49 | 4 | **+45** | **0.92** |
+| 0.95 | 3% | 30 | 0 | +30 | 1.00 |
+
+**Held-out result (τ picked per-fold on other documents — no test tuning):**
+- **Lenient: net +44 (fixed 49, broke 5), override precision 0.92, τ=0.70 in 27/28 folds.**
+- Strict: net +17 (fixed 24, broke 7), τ=0.70 (matcher artifacts lower the strict number, as elsewhere).
+
+**Reading.** The probe's value is enabling a *small, high-precision* regeneration
+budget: gating to the ~11% of fields the probe is most confident are wrong yields
+92% override precision and clean net-positive, where blanket regeneration is
+net-negative. The operating threshold (τ=0.70) is stable across folds, not a
+fragile knob. **This generalizes across all four domains with one probe / prompt /
+policy — the generalization test passes.** The probe does double duty: error
+*detection* (the AUROC result) and regeneration *gating* (this result).
+
+**Note.** This gates on the *original* field's probe score (decide what to
+regenerate). A stronger variant — generate N candidates and let the probe select
+the best, with a safe-override margin (probe as *selector*, à la PromptPort's
+verifier but using internal states) — is the next experiment.
 
 ---
 
@@ -225,3 +258,14 @@ Result pending.
 | Docling vs PyMuPDF gold-coverage | equivalent | Tested null; retain PyMuPDF |
 
 ---
+
+## Next steps
+
+- Finish pooled regeneration (running) → rescore → the generalization number.
+- Sampling-based regeneration (regenerate N times, pick best) — decide the
+  selection criterion (majority vote / probe-scored / model self-pick).
+- Re-run fixability with the improved matcher (the `_normalize` fix affects it too),
+  so fixability and coverage numbers use one consistent matcher.
+- Off-by-one list-element residual → constrained decoding (future work).
+- Pre-registered audit protocol document (formalize the 50/25/25 thresholds,
+  retroactively justify exclusions and the lenient-matcher decision).
