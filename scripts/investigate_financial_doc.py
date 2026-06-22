@@ -89,8 +89,12 @@ def main():
     doc_id = d.doc_id
     print(f"DOC: {doc_id}")
 
-    pdf_path = getattr(d, "pdf_path", None) or getattr(d, "path", None)
+    pdf_path = getattr(d, "source_path", None) or getattr(d, "pdf_path", None) or getattr(d, "path", None)
     print(f"PDF path: {pdf_path}")
+    if pdf_path is None:
+        print("ERROR: could not resolve the PDF path from the doc object.")
+        print("doc attrs:", [a for a in dir(d) if not a.startswith('_')])
+        return 1
 
     outdir = Path(args.outdir) if args.outdir else (cfg.artifacts_path / "results" / "investigate")
     outdir.mkdir(parents=True, exist_ok=True)
@@ -107,6 +111,17 @@ def main():
         outfile = outdir / f"{doc_id}__{backend}.txt"
         outfile.write_text(t, encoding="utf-8")
         print(f"  {backend}: {len(t)} chars -> {outfile}")
+
+    # sanity: compare to the benchmark's own already-extracted text (d.text),
+    # which uses this config's pdf_extractor. If our re-extraction is wildly
+    # shorter, the re-extraction failed (e.g. bad path) -> warn loudly.
+    benchmark_text_len = len(getattr(d, "text", "") or "")
+    print(f"  [sanity] benchmark d.text length: {benchmark_text_len} chars "
+          f"(config pdf_extractor={getattr(cfg.data, 'pdf_extractor', '?')})")
+    for backend in ("pymupdf", "docling"):
+        if texts[backend].startswith("<") or len(texts[backend]) < 0.5 * max(benchmark_text_len, 1):
+            print(f"  [WARN] {backend} extraction looks failed/short "
+                  f"({len(texts[backend])} chars vs benchmark {benchmark_text_len}).")
 
     py_norm = _normalize(texts["pymupdf"]) if not texts["pymupdf"].startswith("<") else None
     dl_norm = _normalize(texts["docling"]) if not texts["docling"].startswith("<") else None
