@@ -33,6 +33,13 @@ from probe_extraction.labeling.value_compare import (
 
 logger = logging.getLogger(__name__)
 
+# Guard against the empty-substitution recursion loop: when one side is an empty
+# dict/list and the other is None, _walk re-substitutes an empty placeholder and
+# recurses on the SAME path without descending toward a leaf. Real ExtractBench
+# data is shallow (max depth ~6); past this cap we treat the node as an
+# unresolvable mismatch and stop, rather than hitting Python's recursion limit.
+_MAX_WALK_DEPTH = 200
+
 
 # ============================================================================
 # Public types
@@ -205,6 +212,7 @@ class Matcher:
             labels=labels,
             unmatched_gold=unmatched_gold,
             unmatched_extracted=unmatched_extracted,
+            _depth=0,
         )
 
         # Aggregates
@@ -243,6 +251,7 @@ class Matcher:
         labels: list[FieldLabel],
         unmatched_gold: list[list[str | int]],
         unmatched_extracted: list[list[str | int]],
+        _depth: int = 0,
     ) -> None:
         """Recursively walk gold + extracted in parallel.
 
@@ -254,6 +263,15 @@ class Matcher:
           - If types disagree at a node: emit a type_mismatch label.
           - If we hit a leaf: compare values, emit a label.
         """
+        # Depth guard: the empty-substitution branches below can loop in place
+        # (gold/extracted empty <-> None) without descending toward a leaf.
+        # Past the cap, treat as an unresolvable mismatch and stop.
+        if _depth > _MAX_WALK_DEPTH:
+            self._emit_type_mismatch(
+                path=path, gold=gold, extracted=extracted, labels=labels,
+            )
+            return
+
         # Resolve any anyOf in the schema to the most specific applicable
         # variant given the actual gold value (best effort).
         sub_schema = _resolve_schema_for_value(schema, gold)
@@ -271,10 +289,10 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
             return
 
-        # Gold is dict, extracted isn't (or vice versa)
         # Gold is dict, extracted isn't (or vice versa)
         if isinstance(gold, dict) or isinstance(extracted, dict):
             # If the missing side is None/empty, this is a structural omission
@@ -290,6 +308,7 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
                 return
             if extracted is None or (isinstance(extracted, dict) and len(extracted) == 0):
@@ -301,6 +320,7 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
                 return
             # Both present but types disagree → genuine type mismatch.
@@ -318,11 +338,10 @@ class Matcher:
                 labels=labels,
                 unmatched_gold=unmatched_gold,
                 unmatched_extracted=unmatched_extracted,
+                _depth=_depth + 1,
             )
             return
 
-        # Gold is list, extracted isn't (or vice versa)
-        # Gold is list, extracted isn't (or vice versa)
         # Gold is list, extracted isn't (or vice versa)
         if isinstance(gold, list) or isinstance(extracted, list):
             # Set-membership arrays handle a missing side directly: coerce
@@ -338,12 +357,13 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
                 return
             # Same structural treatment as for dicts above: if the other side
             # is None/empty, recurse with an empty list as the substitute so
             # we emit per-element labels.
-            if gold is None or (isinstance(gold, list) and len(gold) == 0):                
+            if gold is None or (isinstance(gold, list) and len(gold) == 0):
                 self._walk(
                     schema=sub_schema,
                     gold=[],
@@ -352,6 +372,7 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
                 return
             if extracted is None or (isinstance(extracted, list) and len(extracted) == 0):
@@ -363,13 +384,14 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
                 return
             self._emit_type_mismatch(
                 path=path, gold=gold, extracted=extracted, labels=labels,
             )
             return
-        
+
         # ------ Leaf comparison ------
         self._emit_leaf_label(
             schema=sub_schema,
@@ -393,6 +415,7 @@ class Matcher:
         labels: list[FieldLabel],
         unmatched_gold: list[list[str | int]],
         unmatched_extracted: list[list[str | int]],
+        _depth: int = 0,
     ) -> None:
         """Two cases: arrays of objects (positional) vs primitives (set)."""
         items_schema = (schema or {}).get("items", {}) if schema else {}
@@ -430,6 +453,7 @@ class Matcher:
                     labels=labels,
                     unmatched_gold=unmatched_gold,
                     unmatched_extracted=unmatched_extracted,
+                    _depth=_depth + 1,
                 )
         else:
             # Primitives → single label, set comparison.
@@ -441,8 +465,6 @@ class Matcher:
                 labels=labels,
             )
 
-
-    
     def _emit_primitive_array_label(
         self,
         *,
@@ -494,14 +516,14 @@ class Matcher:
 
     def _emit_set_membership_array_label(self,*,schema,gold_list,extracted_list,path,labels,unmatched_gold,):
         strategy = self._strategy_for(schema, default=ComparisonStrategy.CASE_INSENSITIVE)
-    
+
         # Track which gold elements got matched by at least one extracted element.
         gold_matched = [False] * len(gold_list)
         gold_present_overall = any(_has_content(g) for g in gold_list)
-    
+
         for i, extracted_value in enumerate(extracted_list):
             extracted_present = _has_content(extracted_value)
-    
+
             if not extracted_present:
                 # Model emitted an empty element. No real value, no useful
                 # activation — 03_train_probe filters extracted_present=False.
@@ -520,7 +542,7 @@ class Matcher:
                     )
                 )
                 continue
-    
+
             # Find the first gold element this extracted value matches.
             matched_gold_idx = None
             for gi, gold_value in enumerate(gold_list):
@@ -535,7 +557,7 @@ class Matcher:
                 ):
                     matched_gold_idx = gi
                     break
-    
+
             if matched_gold_idx is not None:
                 gold_matched[matched_gold_idx] = True
                 is_error = 0
@@ -547,7 +569,7 @@ class Matcher:
                 # value is not among it -> a genuine wrong value.
                 error_type = "hallucination" if not gold_present_overall else "value_mismatch"
                 matched_gold_value = None
-    
+
             labels.append(
                 FieldLabel(
                     path=list(path) + [i],
@@ -561,12 +583,11 @@ class Matcher:
                     extracted_present=True,
                 )
             )
-    
+
         # Record gold elements nobody matched (omissions) for reporting only.
         for gi, was_matched in enumerate(gold_matched):
             if not was_matched and _has_content(gold_list[gi]):
                 unmatched_gold.append(list(path) + [f"gold{gi}"])
-
 
     # ------------------------------------------------------------------------
     # Leaf label emission
