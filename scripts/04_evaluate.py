@@ -8,6 +8,8 @@ with per-token logprobs and per-field token spans). Computes AUROC for:
   - Min-logprob baseline (scalar, full-set)
   - Hand-crafted surface-feature baseline (trained, LODO)
   - Combined probe + logprob baseline (trained, LODO)
+  - Three-signal stacking regression: probe P(error) + logprob + handcrafted,
+    reduced to one scalar each, with interpretable per-signal coefficients (LODO)
 
 Artifacts written:
   artifacts/results/comparison.json   — head-to-head AUROC numbers
@@ -33,6 +35,8 @@ from probe_extraction.baselines import (
     evaluate_handcrafted,
     evaluate_combined,
 )
+from probe_extraction.baselines.hand_crafted import build_handcrafted_features
+from probe_extraction.baselines.three_signal import evaluate_three_signal
 from probe_extraction.config import load_config
 from probe_extraction.utils.logging import setup_logging
 
@@ -312,6 +316,60 @@ def main() -> int:
             m.auroc,
         )
 
+    # ------ Three-signal stacking regression (Task 1) ------
+    # Combine probe P(error) + logprob + handcrafted, each reduced to ONE scalar,
+    # so the regression yields one interpretable (standardized) coefficient per
+    # signal. The point is the COEFFICIENTS (each signal's contribution), not
+    # necessarily beating probe-alone. Evaluated under LODO for comparability.
+    three_signal_out = None
+    if best_layer in per_layer_X and per_layer_X[best_layer].size:
+        probe_path = probes_dir / f"probe_layer{best_layer}.pkl"
+        if probe_path.exists():
+            with probe_path.open("rb") as f:
+                best_probe = pickle.load(f)
+            # 1. probe P(error) as a scalar per field
+            probe_p = best_probe.score(per_layer_X[best_layer]).astype(np.float64)
+            # 2. logprob scalar (min-logprob is the stronger single signal)
+            logprob_scalar = min_lp.astype(np.float64)
+            # 3. hand-crafted feature block -> a single scalar "complexity" proxy
+            #    (z-score each feature, then average). This keeps it to ONE
+            #    coefficient, comparable to the other two signals.
+            hc_feats = build_handcrafted_features(meta).astype(np.float64)
+            hc_z = (hc_feats - hc_feats.mean(axis=0)) / (hc_feats.std(axis=0) + 1e-8)
+            handcrafted_scalar = hc_z.mean(axis=1)
+
+            ts = evaluate_three_signal(
+                probe_score=probe_p,
+                logprob=logprob_scalar,
+                handcrafted=handcrafted_scalar,
+                y=y,
+                doc_ids=doc_ids,
+                signal_names=("probe", "min_logprob", "handcrafted"),
+                C=getattr(cfg.probe, "C", 1.0),
+            )
+            three_signal_out = {
+                "auroc": ts.auroc,
+                "auroc_std": ts.auroc_std,
+                "auprc": ts.auprc,
+                "coefficients": ts.coefficients,
+                "coefficients_std": ts.coefficients_std,
+                "layer": best_layer,
+                "eval": "LODO",
+            }
+            logger.info("=" * 70)
+            logger.info("THREE-SIGNAL stacking regression (probe + logprob + handcrafted):")
+            logger.info("  AUROC=%.3f ± %.3f, AUPRC=%.3f",
+                        ts.auroc, ts.auroc_std, ts.auprc)
+            logger.info("  Standardized coefficients (signal importance):")
+            for sig in ts.signal_names:
+                logger.info("    %-14s coef=%+.3f ± %.3f",
+                            sig, ts.coefficients[sig], ts.coefficients_std[sig])
+            logger.info("  (larger |coef| = signal contributes more to the decision)")
+        else:
+            logger.warning("Three-signal skipped: no probe at layer %d.", best_layer)
+    else:
+        logger.warning("Three-signal skipped: layer %d not in activations.", best_layer)
+
     # ------ Comparison summary ------
     baselines_out = {
         "mean_logprob": {
@@ -335,6 +393,8 @@ def main() -> int:
             "layer": best_layer,
             "eval": "LODO",
         }
+    if three_signal_out is not None:
+        baselines_out["three_signal"] = three_signal_out
 
     comparison = {
         "n_samples": n,
@@ -354,6 +414,8 @@ def main() -> int:
     logger.info("  Baseline hand_crafted (LODO): %.3f", hand_metrics.auroc)
     if combined_metrics is not None:
         logger.info("  Baseline combined (LODO):     %.3f", combined_metrics.auroc)
+    if three_signal_out is not None:
+        logger.info("  Three-signal (LODO):          %.3f", three_signal_out["auroc"])
     for ℓ, pr in probe_results.items():
         cv = pr["auroc_cv_mean"]
         cv_str = f"{cv:.3f}" if cv is not None else "n/a"
