@@ -20,11 +20,24 @@ We also log which layer was selected per outer fold, so you can see how stable
 the choice is (with few docs it will vary -- that variation is exactly the bias
 the naive "best layer" number was hiding).
 
+DOMAIN FILTERING (new):
+  Mirrors 05_lodo_cv.py. The labels dir may hold several domains; some (e.g.
+  finance/10kq) carry benchmark-annotation-convention "errors" rather than
+  genuine model errors and must be EXCLUDED from a clean cross-model comparison.
+  Filtering by config alone does nothing because the loader globs every label on
+  disk. Use --include-domains / --exclude-domains to filter on each label file's
+  top-level "domain" key. No flags = all domains (original behaviour preserved).
+
 Reuses existing per-field activations (works on last-token activations; this is
 about LAYER selection, not aggregation). No GPU.
 
 Usage:
+    # all domains (unchanged behaviour)
     python scripts/05b_nested_lodo.py --config configs/exp_qwen35_4b_pooled.yaml
+
+    # clean cross-model set: drop the 10kq convention-noise
+    python scripts/05b_nested_lodo.py --config configs/exp_qwen35_2b_pooled.yaml \\
+        --exclude-domains finance/10kq --out-name nested_lodo_nofin.json
 """
 from __future__ import annotations
 
@@ -50,21 +63,48 @@ def parse_args():
     p.add_argument("--layers", type=int, nargs="*", default=None,
                    help="Candidate layers (default: all in config).")
     p.add_argument("--C", type=float, default=1.0)
+    p.add_argument("--include-domains", type=str, nargs="*", default=None,
+                   help="If set, ONLY load docs whose label-file 'domain' is in this list.")
+    p.add_argument("--exclude-domains", type=str, nargs="*", default=None,
+                   help="If set, SKIP docs whose label-file 'domain' is in this list. "
+                        "Applied after --include-domains.")
+    p.add_argument("--out-name", type=str, default="nested_lodo.json",
+                   help="Filename for the results JSON (so a filtered run doesn't "
+                        "overwrite the all-domain run).")
     return p.parse_args()
 
 
-def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers):
+def _domain_allowed(domain, include, exclude) -> bool:
+    if include is not None and domain not in include:
+        return False
+    if exclude is not None and domain in exclude:
+        return False
+    return True
+
+
+def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
+                      include=None, exclude=None):
     """Return per-layer X dict, y, doc_ids — aligned across layers.
 
     Only keeps fields that have activations for ALL candidate layers, so the
-    layer comparison is on an identical field set.
+    layer comparison is on an identical field set. Documents whose 'domain' is
+    excluded by include/exclude are skipped entirely (NEW).
     """
     rows = []  # each: (doc_id, y, {layer: vec})
+    skipped_domains = {}
     for lp in sorted(labels_dir.glob("*.json")):
         if lp.name.startswith("_"):
             continue
         doc_id = lp.stem
         data = json.load(lp.open())
+
+        # --- domain filter (NEW) -------------------------------------------
+        domain = data.get("domain")
+        if not _domain_allowed(domain, include, exclude):
+            skipped_domains[domain] = skipped_domains.get(domain, 0) + 1
+            continue
+        # -------------------------------------------------------------------
+
         npz = activations_dir / f"{doc_id}.npz"
         if not npz.exists():
             continue
@@ -87,6 +127,10 @@ def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers):
                 if not ok:
                     continue
                 rows.append((doc_id, int(fld.get("is_error", 0)), vecs))
+
+    if skipped_domains:
+        logger.info("Domain filter skipped: %s",
+                    ", ".join(f"{d}={n}" for d, n in sorted(skipped_domains.items())))
 
     doc_ids = np.array([r[0] for r in rows])
     y = np.array([r[1] for r in rows])
@@ -111,9 +155,9 @@ def inner_select_layer(X, y, doc_ids, train_docs, layers, C):
             inner_te = (doc_ids == vd)
             inner_tr = np.isin(doc_ids, train_docs) & ~inner_te
             ytr, yte = y[inner_tr], y[inner_te]
-            if ytr.sum() in (0, ytr.sum().size if False else len(ytr)):
+            if ytr.sum() == 0 or ytr.sum() == len(ytr):
                 continue
-            if yte.sum() in (0, len(yte)):
+            if yte.sum() == 0 or yte.sum() == len(yte):
                 continue
             s = _fit_score(XL[inner_tr], ytr, XL[inner_te], C)
             fold_aurocs.append(roc_auc_score(yte, s))
@@ -164,10 +208,17 @@ def main():
     labels_dir = cfg.artifacts_path / "labels"
     activations_dir = cfg.artifacts_path / "activations"
 
+    if args.include_domains is not None:
+        logger.info("INCLUDE domains: %s", args.include_domains)
+    if args.exclude_domains is not None:
+        logger.info("EXCLUDE domains: %s", args.exclude_domains)
+
     logger.info("Loading activations for layers %s ...", layers)
-    X, y, doc_ids = load_layer_matrix(labels_dir, activations_dir, layers)
+    X, y, doc_ids = load_layer_matrix(labels_dir, activations_dir, layers,
+                                      include=args.include_domains,
+                                      exclude=args.exclude_domains)
     logger.info("Loaded %d fields across %d docs (%d errors, %.1f%%).",
-                len(y), len(set(doc_ids)), int(y.sum()), 100*y.mean())
+                len(y), len(set(doc_ids)), int(y.sum()), 100 * y.mean())
 
     logger.info("Running nested LODO (unbiased layer selection):")
     outer_scores, selected, oof = nested_lodo(X, y, doc_ids, layers, args.C)
@@ -192,13 +243,15 @@ def main():
     logger.info("set to choose the layer). The nested number is the honest one;")
     logger.info("expect it at or slightly below the naive best-layer score.")
 
-    out = cfg.artifacts_path / "results" / "nested_lodo.json"
+    out = cfg.artifacts_path / "results" / args.out_name
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "auroc_mean": mean_auroc, "auroc_std": std_auroc,
         "auprc": auprc, "n_folds": len(outer_scores),
         "layers_selected": dict(Counter(selected)),
         "candidate_layers": layers,
+        "include_domains": args.include_domains,
+        "exclude_domains": args.exclude_domains,
     }, indent=2))
     logger.info("Saved to %s", out)
     return 0
