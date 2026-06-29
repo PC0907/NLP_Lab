@@ -10,8 +10,29 @@ This is methodologically stronger than random-fold CV (the default in
 If random-fold AUROC is much higher than LODO AUROC, the probe is partially
 learning document-level features that don't generalize to new documents.
 
+DOMAIN FILTERING (new):
+  The labels directory may contain documents from several domains. Some domains
+  (e.g. finance/10kq) have error labels dominated by a benchmark-annotation
+  convention rather than genuine model errors, and must be EXCLUDED from a clean
+  cross-model comparison. The original version of this script globbed EVERY
+  label file in the dir and ignored domain entirely, so excluding a domain via a
+  separate config did nothing (the labels were still on disk and were loaded).
+
+  Use --include-domains and/or --exclude-domains to filter by the top-level
+  "domain" key inside each label file. If neither flag is given, ALL domains are
+  loaded (original behaviour preserved -> the 4B pipeline is unaffected).
+
 Usage:
+    # all domains (unchanged behaviour)
     python scripts/05_lodo_cv.py --config configs/exp_qwen35_4b_pymupdf.yaml
+
+    # clean cross-model set: drop the 10kq convention-noise
+    python scripts/05_lodo_cv.py --config configs/exp_qwen35_2b_pooled.yaml \\
+        --exclude-domains finance/10kq
+
+    # equivalently, name exactly what you want to keep
+    python scripts/05_lodo_cv.py --config configs/exp_qwen35_2b_pooled.yaml \\
+        --include-domains academic/research finance/credit_agreement sport/swimming
 """
 
 from __future__ import annotations
@@ -36,18 +57,44 @@ logger = logging.getLogger(__name__)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LODO cross-validation for probes")
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument(
+        "--include-domains", type=str, nargs="*", default=None,
+        help="If set, ONLY load docs whose label-file 'domain' is in this list.",
+    )
+    parser.add_argument(
+        "--exclude-domains", type=str, nargs="*", default=None,
+        help="If set, SKIP docs whose label-file 'domain' is in this list. "
+             "Applied after --include-domains.",
+    )
+    parser.add_argument(
+        "--out-name", type=str, default="lodo_cv.json",
+        help="Filename for the results JSON (so a filtered run doesn't overwrite "
+             "the all-domain run).",
+    )
     return parser.parse_args()
 
 
-def load_doc_data(activations_dir: Path, labels_dir: Path, layer: int):
+def _domain_allowed(domain, include, exclude) -> bool:
+    """Decide whether a document's domain passes the include/exclude filter."""
+    if include is not None and domain not in include:
+        return False
+    if exclude is not None and domain in exclude:
+        return False
+    return True
+
+
+def load_doc_data(activations_dir: Path, labels_dir: Path, layer: int,
+                  include=None, exclude=None):
     """For each labelable document, load its activations at the given layer
     and its per-field labels. Returns a list of (doc_id, X, y) tuples.
 
     Filters out:
+      - Documents whose 'domain' is excluded by include/exclude (NEW)
       - Fields marked is_empty (synthetic activation positions)
       - Documents with no labels or no activations
     """
     docs = []
+    skipped_domains = {}  # domain -> count, for a transparency log
     for labels_path in sorted(labels_dir.glob("*.json")):
         if labels_path.name.startswith("_"):
             continue  # skip _summary.json
@@ -56,10 +103,16 @@ def load_doc_data(activations_dir: Path, labels_dir: Path, layer: int):
         with labels_path.open() as f:
             labels_data = json.load(f)
 
-        # Each labels file is a list of {path, label, value, ...}
-        # We don't have direct access to is_empty here, but the labels file
-        # already excludes is_empty fields (the labeler filters them).
-        # Labels live under "labels" key. Each entry has path_str and is_error.
+        # --- domain filter (NEW) -------------------------------------------
+        domain = labels_data.get("domain")
+        if not _domain_allowed(domain, include, exclude):
+            skipped_domains[domain] = skipped_domains.get(domain, 0) + 1
+            continue
+        # -------------------------------------------------------------------
+
+        # Each labels file is a list of {path, label, value, ...} under "labels".
+        # The labeler already excludes is_empty fields. Each entry has path_str
+        # and is_error.
         fields = labels_data.get("labels", [])
         if not fields:
             continue
@@ -88,6 +141,9 @@ def load_doc_data(activations_dir: Path, labels_dir: Path, layer: int):
         y = np.array(y_list, dtype=np.int64)
         docs.append((doc_id, X, y))
 
+    if skipped_domains:
+        logger.info("Domain filter skipped: %s",
+                    ", ".join(f"{d}={n}" for d, n in sorted(skipped_domains.items())))
     return docs
 
 
@@ -164,10 +220,16 @@ def main() -> int:
     logger.info("LODO CV for experiment: %s", cfg.experiment.name)
     logger.info("Activations dir: %s", activations_dir)
     logger.info("Labels dir: %s", labels_dir)
+    if args.include_domains is not None:
+        logger.info("INCLUDE domains: %s", args.include_domains)
+    if args.exclude_domains is not None:
+        logger.info("EXCLUDE domains: %s", args.exclude_domains)
 
     all_results = {}
     for layer in cfg.activations.layers:
-        docs = load_doc_data(activations_dir, labels_dir, layer)
+        docs = load_doc_data(activations_dir, labels_dir, layer,
+                             include=args.include_domains,
+                             exclude=args.exclude_domains)
         logger.info("Layer %d: %d documents with usable data", layer, len(docs))
 
         if not docs:
@@ -187,7 +249,7 @@ def main() -> int:
             logger.warning("Layer %d: no valid LODO folds (%s)",
                            layer, result.get("warning", ""))
 
-    out_path = results_dir / "lodo_cv.json"
+    out_path = results_dir / args.out_name
     with out_path.open("w") as f:
         json.dump(all_results, f, indent=2)
     logger.info("Saved LODO results to %s", out_path)
