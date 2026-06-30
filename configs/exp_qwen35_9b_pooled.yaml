@@ -12,10 +12,19 @@ model:
   temperature: 0.0
   top_p: 1.0
 activations:
-  # Reduced layer set: the probe signal lives at 16-18 (from the 4B work), so we
-  # capture only this mid-network band. Cuts activation memory ~3x vs the full
-  # 14-layer set -> avoids OOM on the 9B (hidden 4096) on long financial docs.
-  layers: [14, 16, 18, 20, 22]
+  # 9B is 32 layers / hidden 4096, hybrid layout:
+  #   8 x (3 x DeltaNet->FFN  ->  1 x GatedAttention->FFN)
+  # => the full-softmax attention layers are 4,8,12,16,20,24,28,32; the rest are
+  #    linear-attention (DeltaNet). The trust signal reads contextual mixing, so
+  #    the band below deliberately HITS the attention layers (8,12,16,20,24,28).
+  #
+  # Band widened vs the original drafted [14,16,18,20,22]: today's runs showed the
+  # signal sits LOWER than the old "16-18" assumption -- 2B peaked at L14, the 4B
+  # re-run repeatedly selected L12 (and L28). So we bracket ~25-87% depth to avoid
+  # clipping the peak. Clipping forces a full A100 re-extraction, which is the one
+  # expensive mistake to avoid. 8 layers (vs the 5 drafted) is a small memory cost
+  # at hidden-4096; expandable_segments + this band fit A100 80GB on long docs.
+  layers: [8, 12, 14, 16, 18, 20, 24, 28]
   position: "last_token"
   dtype: "float16"
 data:
@@ -23,7 +32,7 @@ data:
   benchmark_path: "data/extract-bench"
   domains:
     - "academic/research"
-    - "finance/10kq"
+    - "finance/10kq"            # extracted, but EXCLUDED at LODO (convention-noise)
     - "finance/credit_agreement"
     - "sport/swimming"
   max_documents: null
