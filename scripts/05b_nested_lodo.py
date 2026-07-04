@@ -68,6 +68,10 @@ def parse_args():
     p.add_argument("--exclude-domains", type=str, nargs="*", default=None,
                    help="If set, SKIP docs whose label-file 'domain' is in this list. "
                         "Applied after --include-domains.")
+    p.add_argument("--include-docs-file", type=str, default=None,
+                   help="Path to a file with one doc_id per line. If set, ONLY these "
+                        "docs are used (the cross-model intersection). Applied on top "
+                        "of domain filters.")
     p.add_argument("--out-name", type=str, default="nested_lodo.json",
                    help="Filename for the results JSON (so a filtered run doesn't "
                         "overwrite the all-domain run).")
@@ -83,12 +87,14 @@ def _domain_allowed(domain, include, exclude) -> bool:
 
 
 def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
-                      include=None, exclude=None):
+                      include=None, exclude=None, include_docs=None):
     """Return per-layer X dict, y, doc_ids — aligned across layers.
 
     Only keeps fields that have activations for ALL candidate layers, so the
     layer comparison is on an identical field set. Documents whose 'domain' is
-    excluded by include/exclude are skipped entirely (NEW).
+    excluded by include/exclude are skipped. If include_docs is given (a set of
+    doc_ids), ONLY those docs are kept — used for the cross-model intersection
+    so 2B/4B/9B are compared on an identical document set.
     """
     rows = []  # each: (doc_id, y, {layer: vec})
     skipped_domains = {}
@@ -96,9 +102,15 @@ def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
         if lp.name.startswith("_"):
             continue
         doc_id = lp.stem
+
+        # --- doc intersection filter (NEW) ---------------------------------
+        if include_docs is not None and doc_id not in include_docs:
+            continue
+        # -------------------------------------------------------------------
+
         data = json.load(lp.open())
 
-        # --- domain filter (NEW) -------------------------------------------
+        # --- domain filter -------------------------------------------------
         domain = data.get("domain")
         if not _domain_allowed(domain, include, exclude):
             skipped_domains[domain] = skipped_domains.get(domain, 0) + 1
@@ -213,10 +225,20 @@ def main():
     if args.exclude_domains is not None:
         logger.info("EXCLUDE domains: %s", args.exclude_domains)
 
+    include_docs = None
+    if args.include_docs_file is not None:
+        include_docs = {
+            line.strip() for line in Path(args.include_docs_file).read_text().splitlines()
+            if line.strip()
+        }
+        logger.info("INCLUDE docs: %d doc_ids from %s (cross-model intersection)",
+                    len(include_docs), args.include_docs_file)
+
     logger.info("Loading activations for layers %s ...", layers)
     X, y, doc_ids = load_layer_matrix(labels_dir, activations_dir, layers,
                                       include=args.include_domains,
-                                      exclude=args.exclude_domains)
+                                      exclude=args.exclude_domains,
+                                      include_docs=include_docs)
     logger.info("Loaded %d fields across %d docs (%d errors, %.1f%%).",
                 len(y), len(set(doc_ids)), int(y.sum()), 100 * y.mean())
 
@@ -230,13 +252,22 @@ def main():
     mean_auroc = float(np.mean(outer_scores))
     std_auroc = float(np.std(outer_scores))
     valid = ~np.isnan(oof)
-    auprc = (average_precision_score(y[valid], oof[valid])
-             if y[valid].sum() not in (0, valid.sum()) else float("nan"))
+    # Pooled out-of-fold metrics: every field was scored by a probe that never
+    # saw its document (so still leakage-free), but the metric is computed ONCE
+    # over all held-out fields rather than averaged per-document. This avoids the
+    # small-fold saturation (tiny credit docs hitting AUROC 1.000) that inflates
+    # and widens the per-fold mean. This is the stable "all fields" number.
+    pooled_ok = y[valid].sum() not in (0, valid.sum())
+    pooled_auroc = (roc_auc_score(y[valid], oof[valid]) if pooled_ok else float("nan"))
+    auprc = (average_precision_score(y[valid], oof[valid]) if pooled_ok else float("nan"))
 
     logger.info("=" * 64)
     logger.info("NESTED LODO (unbiased):")
-    logger.info("  AUROC = %.4f ± %.4f over %d outer folds", mean_auroc, std_auroc, len(outer_scores))
-    logger.info("  pooled OOF AUPRC = %.4f", auprc)
+    logger.info("  per-fold AUROC   = %.4f ± %.4f over %d outer folds (avg of per-doc AUROCs)",
+                mean_auroc, std_auroc, len(outer_scores))
+    logger.info("  pooled-OOF AUROC = %.4f  (one AUROC over all %d held-out fields; stable)",
+                pooled_auroc, int(valid.sum()))
+    logger.info("  pooled-OOF AUPRC = %.4f  (precision-recall; governs regeneration budget)", auprc)
     logger.info("  layers selected across folds: %s", dict(Counter(selected)))
     logger.info("-" * 64)
     logger.info("Compare to the NAIVE best-layer LODO (which peeks at the test")
@@ -247,6 +278,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({
         "auroc_mean": mean_auroc, "auroc_std": std_auroc,
+        "pooled_oof_auroc": pooled_auroc,
         "auprc": auprc, "n_folds": len(outer_scores),
         "layers_selected": dict(Counter(selected)),
         "candidate_layers": layers,
