@@ -1,4 +1,6 @@
-# Weekly Update — Model-Scaling Result (2B/4B/9B)
+# Weekly Update — Model-Scaling Result (2B/4B/9B), Independent Benchmark, Literature
+
+_Team #9 · ExtractBench · Bender HPC · Qwen3.5 family_
 
 ## Summary
 
@@ -183,3 +185,28 @@ policy, could not be located in searches -- confirm it exists before relying on 
 | Probe nested LODO, 4B full (28-doc, prior) | 0.879 +/- 0.11 | Prior headline (all domains) |
 | Insurance schema-key smoke test | 24/24 keys | Viable independent benchmark |
 | Task 1 three-signal coefficients | -- | Built; results still not read |
+
+---
+
+## Next steps
+
+1. **Task 1 three-signal regression coefficients** -- still unread (probe + logprob +
+   hand-crafted stacking). CPU, already run; the supervisor's explicit ask. Expected:
+   probe-dominant, logprob small, hand-crafted ~= 0.
+2. **Insurance extraction** -- run the built loader end-to-end as the independent-
+   benchmark generalisation check. First measure its value-level error rate to confirm
+   it yields a trainable probe (enough errors, unlike 9B-swimming).
+3. **Frame the scaling result carefully in the thesis** -- lead with pooled-OOF (not
+   per-fold), state the credit-heavy n=15 caveat, present both findings.
+4. **(Optional) inter-layer-conflict feature** (REDD-inspired) -- cheap, we already
+   capture multiple layers; could sharpen the safe-override gate.
+
+## Principle this week
+
+The raw per-model AUROCs looked like the signal *degraded* at 9B (0.78 per-fold) -- but
+that was an artifact of error-starved swimming folds on a now-excellent extractor. The
+honest metric (pooled-OOF on an identical document set) reversed it: the signal
+*strengthens* with scale. Separating the measurement artifact from the real trend --
+by fixing the comparison to identical documents and using the leakage-free pooled
+metric -- was the substance of the week, and it turned a false negative into the
+study's central positive result.
