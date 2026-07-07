@@ -34,15 +34,16 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from probe_extraction.data.real_kie import RealKIE
+from src.probe_extraction.data.real_kie import RealKIE
+from src.probe_extraction.data.insurance_claims import InsuranceClaims
 import numpy as np
 from tqdm import tqdm
 
-from probe_extraction.config import Config, get_hf_token, load_config
-from probe_extraction.data.extract_bench import ExtractBench
-from probe_extraction.extraction import Extractor, ExtractionResult
-from probe_extraction.models import HuggingFaceLLM
-from probe_extraction.utils.logging import setup_logging
+from src.probe_extraction.config import Config, get_hf_token, load_config
+from src.probe_extraction.data.extract_bench import ExtractBench
+from src.probe_extraction.extraction import Extractor, ExtractionResult
+from src.probe_extraction.models import HuggingFaceLLM
+from src.probe_extraction.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +94,9 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
             max_documents=max_docs,
             pdf_backend=cfg.data.pdf_extractor,
         )
-    if cfg.data.benchmark == "real_kie":
+    if cfg.data.benchmark == "insurance_claims":
         max_docs = limit_override if limit_override is not None else cfg.data.max_documents
-        return RealKIE(
+        return InsuranceClaims(
             benchmark_path=cfg.benchmark_path,
             domains=cfg.data.domains or None,
             max_documents=max_docs,
