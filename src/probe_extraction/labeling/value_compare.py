@@ -35,6 +35,10 @@ class ComparisonStrategy(str, Enum):
     Numeric values: NUMBER (with tolerance) or EXACT.
     Booleans / nulls: EXACT.
     URLs / emails: get a normalization pass before comparison.
+    AUTO: type-aware default (numeric -> date -> case-insensitive string),
+        used when the schema declares no evaluation_config. Tolerant to
+        value-formatting differences ($1,234 == 1234; "New York" == "new york")
+        without suppressing genuine errors (FY2025 Q2 != Q1).
     """
 
     EXACT = "exact"
@@ -44,6 +48,7 @@ class ComparisonStrategy(str, Enum):
     URL = "url"
     EMAIL = "email"
     DATE = "date"
+    AUTO = "auto"
 
 
 # ============================================================================
@@ -106,8 +111,86 @@ def compare_values(
         return _compare_email(g, e)
     if strategy == ComparisonStrategy.DATE:
         return _compare_date(g, e)
+    if strategy == ComparisonStrategy.AUTO:
+        return _compare_auto(
+            g, e, fuzzy_threshold=fuzzy_threshold, number_tolerance=number_tolerance,
+        )
 
     raise ValueError(f"Unsupported comparison strategy: {strategy!r}")
+
+
+# ============================================================================
+# AUTO strategy (type-aware default) — added for the DeepSeek-R1 labeling work.
+# Self-contained: does NOT modify the existing _compare_* functions, so all
+# prior behaviour (and the existing test suite) is unchanged.
+# ============================================================================
+
+# Fiscal-period / quarter strings must NEVER be parsed as dates:
+# 'FY2025 Q2' vs 'FY2025 Q1' is a real, systematic mismatch, not a date.
+_PERIOD_RE = re.compile(r"\b(Q[1-4]|H[12]|FY\s?\d{2,4})\b", re.IGNORECASE)
+
+
+def _looks_like_period(v: Any) -> bool:
+    return bool(_PERIOD_RE.search(str(v)))
+
+
+def _looks_numeric(v: Any) -> bool:
+    """True if v is (or parses as) a number, after stripping commas/$ ."""
+    if isinstance(v, bool):
+        return False  # never treat True/False as 1/0
+    if isinstance(v, (int, float)):
+        return True
+    if isinstance(v, str):
+        s = v.strip().replace(",", "").replace("$", "")
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def _to_number_auto(v: Any) -> float | None:
+    """Parse to float, stripping commas and currency symbols. None if unparseable."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        s = v.strip().replace(",", "").replace("$", "")
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    return None
+
+
+def _compare_auto(g: Any, e: Any, *, fuzzy_threshold: float, number_tolerance: float) -> bool:
+    """Type-aware comparison for fields with no explicit evaluation_config.
+
+    Cascade:
+      1. Both numeric -> relative tolerance ($1,234 == 1234; 49.7 == 49.70).
+      2. Else both real dates (and neither a fiscal-period string) -> date eq.
+      3. Else -> case-insensitive string compare.
+
+    Deliberately NOT fuzzy in the string fallback, to avoid suppressing real
+    token-overlapping errors (e.g. 'FY2025 Q2' vs 'FY2025 Q1').
+    """
+    if _looks_numeric(g) and _looks_numeric(e):
+        gn, en = _to_number_auto(g), _to_number_auto(e)
+        if gn is None or en is None:
+            return _compare_case_insensitive(g, e)
+        if gn == en:
+            return True
+        if gn == 0:
+            return abs(en) <= number_tolerance
+        return abs(gn - en) / abs(gn) <= number_tolerance
+    if not _looks_like_period(g) and not _looks_like_period(e):
+        gd = _try_parse_date(str(g))
+        ed = _try_parse_date(str(e))
+        if gd is not None and ed is not None:
+            return gd == ed
+    return _compare_case_insensitive(g, e)
 
 
 # ============================================================================

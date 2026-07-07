@@ -45,9 +45,19 @@ echo "=== STAGE 05: LODO cross-validation (per-layer logistic regression) ==="
 python scripts/05_lodo_cv.py --config "$CFG"
 
 echo ""
-echo "=== STAGES 02–05 COMPLETE ==="
+echo "=== STAGE 06: Reasoning-fusion LODO (answer vs reasoning-fused) ==="
+python scripts/06_reasoning_fusion_lodo.py --config "$CFG"
+
 echo ""
-echo "=== PER-LAYER LODO RESULTS ==="
+echo "=== STAGES 02–06 COMPLETE ==="
+echo ""
+echo "=== ERROR-DEFINITION CHECK (strict vs auto vs structure_aware) ==="
+echo "    The whole point: structure_aware should be FAR below strict's ~95%."
+python -m json.tool "artifacts/$EXP/labels/_definition_comparison.json" 2>/dev/null || \
+    cat "artifacts/$EXP/labels/_definition_comparison.json" 2>/dev/null || true
+
+echo ""
+echo "=== PER-LAYER LODO RESULTS (answer-token baseline) ==="
 python -c "
 import json
 with open('artifacts/$EXP/results/lodo_cv.json') as f:
@@ -66,4 +76,17 @@ for layer, res in sorted(d.items(), key=lambda x: int(x[0])):
 " 2>/dev/null || cat "artifacts/$EXP/results/lodo_cv.json"
 
 echo ""
-echo "Next step: sbatch run_clap.sh"
+echo "=== REASONING-FUSION SUMMARY (answer vs fused; per_doc vs pooled_oof) ==="
+python -c "
+import json
+d = json.load(open('artifacts/$EXP/results/reasoning_fusion_lodo.json'))
+s = d['summary']
+for metric in ('per_doc_auroc_mean','pooled_oof_auroc'):
+    print(metric+':')
+    for v in ('answer','fused_mean','fused_last','fused_both'):
+        e = s[metric][v]; a = e['best_auroc']
+        print(f'  {v:<12} layer {e[\"best_layer\"]}  AUROC ' + (f'{a:.4f}' if a is not None else 'n/a'))
+" 2>/dev/null || cat "artifacts/$EXP/results/reasoning_fusion_lodo.json"
+
+echo ""
+echo "Done. Hand artifacts/$EXP/ back for analysis."

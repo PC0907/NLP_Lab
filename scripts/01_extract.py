@@ -100,6 +100,15 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
             domains=cfg.data.domains or None,
             max_documents=max_docs,
         )
+    if cfg.data.benchmark == "sob":
+        from probe_extraction.data.sob import SOB
+        max_docs = limit_override if limit_override is not None else cfg.data.max_documents
+        return SOB(
+            benchmark_path=cfg.benchmark_path,
+            split=cfg.data.split,
+            domains=cfg.data.domains or None,
+            max_documents=max_docs,
+        )
     raise ValueError(f"Unknown benchmark: {cfg.data.benchmark!r}")
 
 
@@ -161,14 +170,22 @@ def save_activations(
         with np.load(path) as data:
             vec = data["personalInfo.fullName__layer20"]
     """
-    if not result.fields:
-        return  # nothing to save
-
     arrays: dict[str, np.ndarray] = {}
     for f in result.fields:
         for layer, vec in f.activations.items():
             key = f"{f.path_str}__layer{layer}"
             arrays[key] = vec
+
+    # Reasoning-trace pooled vectors (reasoning models only). Reserved "__"
+    # prefix never collides with a JSON field path_str, so existing per-field
+    # loaders ignore these keys; the fused reasoning probe reads them explicitly.
+    # e.g. "__reasoning_mean__layer18", "__reasoning_last__layer18".
+    for pool_name, per_layer in getattr(result, "reasoning_activations", {}).items():
+        for layer, vec in per_layer.items():
+            arrays[f"__{pool_name}__layer{layer}"] = vec
+
+    if not arrays:
+        return  # nothing to save
 
     out_path = activations_dir / f"{result.doc_id}.npz"
     np.savez_compressed(out_path, **arrays)

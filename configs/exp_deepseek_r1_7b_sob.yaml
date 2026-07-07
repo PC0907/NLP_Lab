@@ -1,0 +1,97 @@
+# Experiment: DeepSeek-R1-Distill-Qwen-7B on SOB (text / multi-hop subset).
+#
+# Why SOB: multi-hop QA -> JSON with a per-record schema and complete,
+# human-verified gold. Extraction genuinely requires REASONING, so the
+# reasoning-trace trust signal (the paper's thesis) has real signal to read.
+#
+# Prereqs on the LOGIN node:
+#   python scripts/00_download_sob.py --out data/sob        # caches interfaze-ai/sob
+#   python scripts/00_download_model.py                     # DeepSeek weights
+#
+# Contexts are short (~919 tokens), so no truncation and a smaller token budget.
+# Per-record schemas are handled: Stage 2 uses each Document's own schema.
+
+experiment:
+  name: "deepseek_r1_7b_sob"
+  seed: 42
+  artifacts_dir: "artifacts"
+
+model:
+  name: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: false
+  max_new_tokens: 4096          # short JSON answer + a reasoning trace
+  temperature: 0.0
+  top_p: 1.0
+
+activations:
+  # 14 layers, proportionally mapped to DeepSeek-R1-7B's 28-layer architecture
+  # (same mapping as the ExtractBench DeepSeek config, for cross-dataset compare).
+  layers: [1, 4, 7, 10, 12, 14, 16, 18, 19, 21, 23, 24, 26, 28]
+  position: "last_token"
+  dtype: "float16"
+
+data:
+  benchmark: "sob"
+  benchmark_path: "data/sob"    # output of scripts/00_download_sob.py
+  split: "test"
+  domains: []                   # all (sob/hotpotqa)
+  max_documents: 300            # tractable first LODO run; raise once validated
+  pdf_extractor: "pymupdf"      # unused for SOB (text is already provided)
+
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 0            # short contexts; no truncation needed
+
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+  # SOB's own metric is strict exact-match (penalises "USA" vs "American");
+  # structure_aware + AUTO is our fairer labeling and Stage 2 also writes the
+  # strict/auto/structure_aware comparison for the paper's Table 1.
+  match_mode: "structure_aware"
+
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+
+clap:
+  d_model: 128
+  n_enc: 1
+  dropout: 0.1
+  lr: 5.0e-4
+  epochs: 50
+  batch_size: 64
+  weight_decay: 1.0e-2
+  warmup_epochs: 5
+  patience: 10
+
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"

@@ -31,6 +31,14 @@ load_benchmark = import_module("01_extract").load_benchmark
 
 from probe_extraction.config import load_config
 from probe_extraction.labeling.matcher import LabelingResult, label_extraction
+from probe_extraction.labeling.value_compare import ComparisonStrategy
+
+# Map config match_mode -> matcher (leaf_default, structure_aware) settings.
+_MODE_PARAMS = {
+    "strict":          dict(leaf_default=ComparisonStrategy.EXACT, structure_aware=False),
+    "auto":            dict(leaf_default=ComparisonStrategy.AUTO,  structure_aware=False),
+    "structure_aware": dict(leaf_default=ComparisonStrategy.AUTO,  structure_aware=True),
+}
 
 # from probe_extraction.config import load_config
 # from probe_extraction.data.extract_bench import ExtractBench
@@ -124,14 +132,25 @@ def main() -> int:
     labels_dir = artifacts / "labels"
     labels_dir.mkdir(parents=True, exist_ok=True)
 
-    # We need gold annotations from the benchmark.
+    # We need gold annotations AND per-document schemas from the benchmark.
+    # Per-document (not per-domain) schema is required for benchmarks like SOB
+    # where every record carries its own JSON Schema; for ExtractBench this is
+    # simply the domain schema repeated, so it is correct for both.
     benchmark = load_benchmark(cfg)
     gold_by_id: dict[str, dict[str, Any]] = {}
-    schema_by_domain: dict[str, dict[str, Any]] = {
-        d: benchmark.get_schema(d) for d in benchmark.domains
-    }
+    schema_by_id: dict[str, dict[str, Any]] = {}
     for doc in benchmark:
         gold_by_id[doc.doc_id] = doc.gold
+        schema_by_id[doc.doc_id] = doc.schema
+
+    # Resolve the primary labeling mode (what we save + train on) and prepare
+    # an all-modes comparison (for the paper's error-definition table).
+    primary_mode = getattr(cfg.labeling, "match_mode", "strict")
+    if primary_mode not in _MODE_PARAMS:
+        logger.warning("Unknown match_mode %r; falling back to 'strict'.", primary_mode)
+        primary_mode = "strict"
+    logger.info("Primary labeling match_mode: %s", primary_mode)
+    definition_counts = {m: {"n_total": 0, "n_errors": 0, "n_docs": 0} for m in _MODE_PARAMS}
 
     # Iterate Stage 1 extraction files.
     results: list[LabelingResult] = []
@@ -151,27 +170,48 @@ def main() -> int:
             logger.warning("No gold for %s; skipping", doc_id)
             continue
 
+        # Label under ALL modes (cheap, CPU). The primary mode's labels are
+        # saved + used downstream; the others feed the comparison summary only.
         try:
-            result = label_extraction(
-                doc_id=doc_id,
-                domain=domain,
-                schema=schema_by_domain[domain],
-                gold=gold_by_id[doc_id],
-                extracted=ext["parsed_json"],
-                fuzzy_threshold=cfg.labeling.fuzzy_threshold,
-                number_tolerance=cfg.labeling.number_tolerance,
-            )
+            per_mode = {
+                m: label_extraction(
+                    doc_id=doc_id,
+                    domain=domain,
+                    schema=schema_by_id.get(doc_id, {}),
+                    gold=gold_by_id[doc_id],
+                    extracted=ext["parsed_json"],
+                    fuzzy_threshold=cfg.labeling.fuzzy_threshold,
+                    number_tolerance=cfg.labeling.number_tolerance,
+                    **params,
+                )
+                for m, params in _MODE_PARAMS.items()
+            }
         except (RecursionError, Exception) as e:
             logger.warning("Skipping %s (labeling failed: %s: %s)",
                            doc_id, type(e).__name__, e)
             continue
+
+        result = per_mode[primary_mode]
         save_labels(result, labels_dir)
         results.append(result)
+        for m, r in per_mode.items():
+            definition_counts[m]["n_total"] += r.n_total
+            definition_counts[m]["n_errors"] += r.n_errors
+            definition_counts[m]["n_docs"] += 1
         logger.info(
-            "%s: %d fields, %d errors (%.0f%%)",
+            "%s: %d fields, %d errors (%.0f%%) [mode=%s]",
             doc_id, result.n_total, result.n_errors,
-            100 * result.error_rate,
+            100 * result.error_rate, primary_mode,
         )
+
+    # Error-definition comparison (paper Table 1): error rate under each mode.
+    for m, c in definition_counts.items():
+        c["error_rate"] = c["n_errors"] / c["n_total"] if c["n_total"] else 0.0
+    comp_path = labels_dir / "_definition_comparison.json"
+    with comp_path.open("w", encoding="utf-8") as f:
+        json.dump({"primary_mode": primary_mode, "modes": definition_counts}, f, indent=2)
+    logger.info("Error-definition comparison (error rate by mode): %s",
+                {m: round(definition_counts[m]["error_rate"], 3) for m in definition_counts})
 
     summary_path = labels_dir / "_summary.json"
     write_summary(results, summary_path)

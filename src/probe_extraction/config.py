@@ -57,11 +57,12 @@ class ActivationsConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
-    benchmark: Literal["extract_bench", "real_kie"] = "extract_bench"
+    benchmark: Literal["extract_bench", "real_kie", "sob"] = "extract_bench"
     benchmark_path: str
     domains: list[str] = Field(default_factory=list)
     max_documents: int | None = None
     pdf_extractor: Literal["pymupdf", "docling"] = "pymupdf"
+    split: str = "test"   # SOB only: which HF split to load (test/train/validation)
 
 
 class ExtractionConfig(BaseModel):
@@ -78,6 +79,13 @@ class LabelingConfig(BaseModel):
     number_tolerance: float = 0.01
     url_normalize: bool = True
     email_normalize: bool = True
+    # How leaf comparison + schema-shape divergence are handled:
+    #   strict          -> EXACT leaf compare, object-vs-primitive = type_mismatch
+    #                      (original behaviour; preserved as default)
+    #   auto            -> type-aware (AUTO) leaf compare, shape still strict
+    #   structure_aware -> AUTO leaf compare AND match flat values against gold
+    #                      object leaves (the DeepSeek-R1 fix)
+    match_mode: Literal["strict", "auto", "structure_aware"] = "strict"
 
     @field_validator("fuzzy_threshold", "number_tolerance")
     @classmethod

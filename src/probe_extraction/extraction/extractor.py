@@ -31,6 +31,10 @@ from probe_extraction.extraction.parser import (
     parse_json_output,
 )
 from probe_extraction.extraction.prompts import build_extraction_prompt
+from probe_extraction.extraction.reasoning_trace import (
+    find_reasoning_end_token,
+    reasoning_pooled_vectors,
+)
 from probe_extraction.models.base import LLM
 
 logger = logging.getLogger(__name__)
@@ -99,6 +103,12 @@ class ExtractionResult:
     token_logprobs: list[float] | None
     fields: list[FieldExtraction] = field(default_factory=list)
     captured_layers: list[int] = field(default_factory=list)
+    # Reasoning-trace pooled activations (reasoning models only, e.g.
+    # DeepSeek-R1). Maps pool name -> {layer: (hidden_dim,) vector}, where the
+    # pool is over the <think>...</think> tokens that precede the JSON answer.
+    # Keys: "reasoning_mean" (mean over trace tokens), "reasoning_last" (the
+    # </think> position). Empty for non-reasoning models (no </think>).
+    reasoning_activations: dict[str, dict[int, np.ndarray]] = field(default_factory=dict)
 
     @property
     def is_success(self) -> bool:
@@ -297,6 +307,21 @@ class Extractor:
             num_generated=len(gen_output.generated_token_ids),
         )
 
+        # ------ Pool the reasoning trace (reasoning models only) ------
+        # The <think>...</think> tokens precede the JSON answer and their
+        # activations are already captured. Pool them into per-layer summary
+        # vectors so downstream probes can fuse reasoning-state with the
+        # answer-token signal. Empty dict for non-reasoning models.
+        reasoning_end = find_reasoning_end_token(per_token_strings)
+        reasoning_acts = reasoning_pooled_vectors(
+            gen_output.hidden_states or {}, reasoning_end,
+        )
+        if reasoning_end > 0:
+            logger.info(
+                "Reasoning trace: %d tokens before </think>; pooled %d layer(s).",
+                reasoning_end, len(reasoning_acts.get("reasoning_mean", {})),
+            )
+
         return ExtractionResult(
             doc_id=doc.doc_id,
             domain=doc.domain,
@@ -310,6 +335,7 @@ class Extractor:
             token_logprobs=gen_output.token_logprobs,
             fields=fields,
             captured_layers=list(self.layers),
+            reasoning_activations=reasoning_acts,
         )
 
     # ------------------------------------------------------------------------

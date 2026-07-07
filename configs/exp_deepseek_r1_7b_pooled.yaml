@@ -69,6 +69,11 @@ labeling:
   number_tolerance: 0.01
   url_normalize: true
   email_normalize: true
+  # structure_aware: match flat values against gold object leaves + type-aware
+  # (AUTO) leaf comparison. Fixes the inflated ~95% error rate where DeepSeek-R1
+  # emits "B. Boser" against gold {"name": "B. Boser", ...}. Stage 2 also writes
+  # _definition_comparison.json with strict/auto/structure_aware error rates.
+  match_mode: "structure_aware"
 
 probe:
   type: "logistic_regression"

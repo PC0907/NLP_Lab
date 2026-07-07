@@ -25,6 +25,9 @@ env/
 # === Project artifacts (regenerable, large) ===
 artifacts/
 data/extract-bench/
+data/sob/
+data/sob
+*.arrow
 *.npz
 *.pkl
 *.pt
