@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from src.probe_extraction.data.real_kie import RealKIE
+# from src.probe_extraction.data.real_kie import RealKIE
 from src.probe_extraction.data.insurance_claims import InsuranceClaims
 import numpy as np
 from tqdm import tqdm
