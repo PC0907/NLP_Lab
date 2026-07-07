@@ -35,15 +35,15 @@ import time
 from pathlib import Path
 from typing import Any
 # from src.probe_extraction.data.real_kie import RealKIE
-from src.probe_extraction.data.insurance_claims import InsuranceClaims
+from probe_extraction.data.insurance_claims import InsuranceClaims
 import numpy as np
 from tqdm import tqdm
 
-from src.probe_extraction.config import Config, get_hf_token, load_config
-from src.probe_extraction.data.extract_bench import ExtractBench
-from src.probe_extraction.extraction import Extractor, ExtractionResult
-from src.probe_extraction.models import HuggingFaceLLM
-from src.probe_extraction.utils.logging import setup_logging
+from probe_extraction.config import Config, get_hf_token, load_config
+from probe_extraction.data.extract_bench import ExtractBench
+from probe_extraction.extraction import Extractor, ExtractionResult
+from probe_extraction.models import HuggingFaceLLM
+from probe_extraction.utils.logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
