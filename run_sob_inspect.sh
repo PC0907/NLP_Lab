@@ -16,7 +16,7 @@ cd ~/NLP_Lab
 echo "=== SOB raw columns (text config) ==="
 python -c "
 from datasets import load_dataset
-ds = load_dataset('interfaze-ai/sob', 'text')
+ds = load_dataset('interfaze-ai/sob', 'default')
 split = list(ds.keys())[0]; d = ds[split]
 print('splits:', list(ds.keys()), '| n:', len(d))
 print('columns:', d.column_names)
