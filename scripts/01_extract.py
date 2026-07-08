@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 # from src.probe_extraction.data.real_kie import RealKIE
 from probe_extraction.data.insurance_claims import InsuranceClaims
+from probe_extraction.data.sob import SOBench
 import numpy as np
 from tqdm import tqdm
 
@@ -97,6 +98,13 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
     if cfg.data.benchmark == "insurance_claims":
         max_docs = limit_override if limit_override is not None else cfg.data.max_documents
         return InsuranceClaims(
+            benchmark_path=cfg.benchmark_path,
+            domains=cfg.data.domains or None,
+            max_documents=max_docs,
+        )
+    if cfg.data.benchmark == "sob":
+        max_docs = limit_override if limit_override is not None else cfg.data.max_documents
+        return SOBench(
             benchmark_path=cfg.benchmark_path,
             domains=cfg.data.domains or None,
             max_documents=max_docs,

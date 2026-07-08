@@ -57,7 +57,7 @@ class ActivationsConfig(BaseModel):
 
 
 class DataConfig(BaseModel):
-    benchmark: Literal["extract_bench", "real_kie", "insurance_claims"] = "extract_bench"
+    benchmark: Literal["extract_bench", "real_kie", "insurance_claims", "sob"] = "extract_bench"
     benchmark_path: str
     domains: list[str] = Field(default_factory=list)
     max_documents: int | None = None
