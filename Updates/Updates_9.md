@@ -183,20 +183,6 @@ validated as a document-extraction fit: a schema-key smoke test confirmed Qwen3.
 reproduces its nested schema 100% literally (no Llama-style key divergence); a
 text-native loader was built (mirroring the RealKIE pattern, no PDF round-trip);
 extraction gave 30/30 docs, 474 fields, 19.2% errors — a trainable target.
-
----
-
-## 5. Scope note: SOB dataset evaluated and rejected
-
-The JigsawStack SOB benchmark (17.7k records, clean gold, nested schemas) was
-evaluated as a possible additional dataset. On inspection it is **structured QA**
-(context + question -> reason to an answer), not document extraction — errors are
-multi-hop reasoning errors, not extraction errors. This is out of scope for the
-project's extraction focus ("identify risky *extracted* fields"), so it was
-rejected rather than run. Noted as possible future cross-task-type work. Insurance
-(genuine document extraction) is the correct independent benchmark, and delivered
-the transfer result above.
-
 ---
 
 ## 6. Status of headline numbers
