@@ -20,6 +20,7 @@ data.benchmark_path at that directory; this loader uses datasets.load_from_disk.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Iterator
@@ -27,6 +28,21 @@ from typing import Any, Iterator
 from probe_extraction.data.base import Benchmark, Document
 
 logger = logging.getLogger(__name__)
+
+
+def _as_dict(v: Any) -> dict[str, Any]:
+    """SOB stores json_schema / ground_truth as JSON *strings* in the parquet
+    (schemas vary in shape, so they can't be a fixed Arrow struct). Parse to a
+    dict; tolerate an already-parsed dict or an unparseable value."""
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str) and v.strip():
+        try:
+            parsed = json.loads(v)
+            return parsed if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+    return {}
 
 
 # ============================================================================
@@ -53,8 +69,8 @@ def record_to_document(rec: dict[str, Any]) -> Document:
         doc_id=doc_id,
         domain=domain,
         text=text,
-        schema=rec.get("json_schema") or {},
-        gold=rec.get("ground_truth") or {},
+        schema=_as_dict(rec.get("json_schema")),
+        gold=_as_dict(rec.get("ground_truth")),
         source_path=Path(rec_id or doc_id),
         metadata={
             "schema_complexity": rec.get("schema_complexity"),

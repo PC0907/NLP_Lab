@@ -50,13 +50,22 @@ def main() -> int:
     print(f"Saved to {out.resolve()}")
     print("Set data.benchmark='sob', data.benchmark_path='%s', data.split='test'." % args.out)
 
-    # Sanity peek at one record's shape.
+    # Sanity peek at one record's shape. NB: json_schema / ground_truth are
+    # stored as JSON *strings* in the parquet, so parse before inspecting.
+    import json
+    def _peek(v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return {}
+        return v or {}
     test = ds["test"] if "test" in ds else next(iter(ds.values()))
     ex = test[0]
     print("\nExample record keys:", list(ex.keys()))
     print("  question:", str(ex.get("question"))[:120])
-    print("  json_schema keys:", list((ex.get("json_schema") or {}).get("properties", {}).keys()))
-    print("  ground_truth:", str(ex.get("ground_truth"))[:160])
+    print("  json_schema keys:", list(_peek(ex.get("json_schema")).get("properties", {}).keys()))
+    print("  ground_truth:", str(_peek(ex.get("ground_truth")))[:160])
     return 0
 
 

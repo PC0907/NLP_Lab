@@ -6,6 +6,8 @@ question, json_schema, ground_truth, source_dataset, ...).
 """
 from __future__ import annotations
 
+import json
+
 from probe_extraction.data.sob import record_to_document
 from probe_extraction.labeling.matcher import label_extraction
 from probe_extraction.labeling.value_compare import ComparisonStrategy
@@ -43,6 +45,16 @@ def test_record_to_document_mapping():
     assert doc.gold == _REC["ground_truth"]
     assert doc.extraction_error is None
     assert doc.metadata["schema_complexity"] == "hard"
+
+
+def test_record_to_document_parses_json_string_fields():
+    # Real SOB parquet stores json_schema / ground_truth as JSON STRINGS.
+    rec = dict(_REC)
+    rec["json_schema"] = json.dumps(_REC["json_schema"])
+    rec["ground_truth"] = json.dumps(_REC["ground_truth"])
+    doc = record_to_document(rec)
+    assert isinstance(doc.schema, dict) and "properties" in doc.schema
+    assert isinstance(doc.gold, dict) and doc.gold["instrument_name"] == "Tambourine"
 
 
 def test_record_to_document_id_is_filesystem_safe():
