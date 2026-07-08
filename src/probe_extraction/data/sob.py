@@ -3,19 +3,7 @@
 SOB (interfaze-ai/sob, arXiv:2604.25359) pairs a multi-hop question + source
 context with a per-record JSON Schema and a human-verified ground-truth JSON
 answer. The text subset is derived from HotpotQA, so extraction genuinely
-requires multi-hop REASONING — the property that makes it a good fit for probing
-a reasoning model's (DeepSeek-R1) reasoning trace.
-
-Key differences from ExtractBench (handled here + a one-line Stage-2 change):
-  - Schema is PER RECORD (not one schema per domain). Each Document carries its
-    own schema; get_schema(domain) is therefore not meaningful and returns {}.
-  - Input is already text (Wikipedia passages) — no PDF extraction. The question
-    is folded into Document.text so the existing extraction prompt elicits the
-    answer without any prompt change.
-
-Offline use on the cluster: run scripts/00_download_sob.py on the LOGIN node to
-cache the dataset to disk (compute nodes have no internet). Point
-data.benchmark_path at that directory; this loader uses datasets.load_from_disk.
+requires multi-hop REASONING.
 """
 
 from __future__ import annotations
@@ -31,9 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def _as_dict(v: Any) -> dict[str, Any]:
-    """SOB stores json_schema / ground_truth as JSON *strings* in the parquet
-    (schemas vary in shape, so they can't be a fixed Arrow struct). Parse to a
-    dict; tolerate an already-parsed dict or an unparseable value."""
+    """SOB stores json_schema / ground_truth as JSON *strings* in the parquet.
+    Parse to a dict; tolerate an already-parsed dict or an unparseable value."""
     if isinstance(v, dict):
         return v
     if isinstance(v, str) and v.strip():
@@ -45,16 +32,8 @@ def _as_dict(v: Any) -> dict[str, Any]:
     return {}
 
 
-# ============================================================================
-# Pure record -> Document mapping (no datasets dependency, unit-testable)
-# ============================================================================
-
 def record_to_document(rec: dict[str, Any]) -> Document:
-    """Map one SOB record (a dict) to a pipeline Document.
-
-    The question is prepended to the context so the standard extraction prompt
-    ("extract per the schema from the document below") sees what to answer.
-    """
+    """Map one SOB record (a dict) to a pipeline Document."""
     question = (rec.get("question") or "").strip()
     context = (rec.get("context") or "").strip()
     text = f"Question: {question}\n\nContext:\n{context}" if question else context
@@ -78,33 +57,19 @@ def record_to_document(rec: dict[str, Any]) -> Document:
             "question_difficulty": rec.get("question_difficulty"),
             "source_dataset": source_dataset,
         },
-        extraction_error=None,  # text is already available; nothing can fail here
+        extraction_error=None,
     )
 
 
 def _safe_doc_id(rec_id: str) -> str:
-    """SOB record_ids are sha256 hex (filesystem-safe). Guard anyway."""
     stem = rec_id
     for bad in [" ", "/", "\\", ":", "*", "?", '"', "<", ">", "|"]:
         stem = stem.replace(bad, "_")
     return f"sob__{stem}"
 
 
-# ============================================================================
-# Benchmark loader
-# ============================================================================
-
 class SOB(Benchmark):
-    """Loader for the SOB text subset via a locally-cached HF dataset.
-
-    Args:
-        benchmark_path: directory produced by `datasets.save_to_disk` (see
-            scripts/00_download_sob.py). May hold a DatasetDict (train/
-            validation/test) or a single split.
-        split: which split to use (default "test", 5,000 records).
-        domains: optional list of "sob/<source>" domains to keep.
-        max_documents: cap on records (useful for a small first run).
-    """
+    """Loader for the SOB text subset via a locally-cached HF dataset."""
 
     def __init__(
         self,
@@ -115,12 +80,9 @@ class SOB(Benchmark):
         max_documents: int | None = None,
     ) -> None:
         try:
-            from datasets import load_from_disk  # lazy: only needed for SOB
+            from datasets import load_from_disk
         except ImportError as e:  # pragma: no cover
-            raise ImportError(
-                "The `datasets` package is required for the SOB benchmark. "
-                "Add `datasets` to requirements.txt and pip install it."
-            ) from e
+            raise ImportError("The `datasets` package is required for SOB.") from e
 
         self.benchmark_path = Path(benchmark_path)
         if not self.benchmark_path.exists():
@@ -130,7 +92,6 @@ class SOB(Benchmark):
             )
 
         ds = load_from_disk(str(self.benchmark_path))
-        # DatasetDict vs single Dataset.
         if hasattr(ds, "keys") and not hasattr(ds, "features"):
             if split not in ds:
                 raise KeyError(f"Split {split!r} not in dataset; have {list(ds.keys())}.")
@@ -142,7 +103,6 @@ class SOB(Benchmark):
             ds = ds.select(range(min(max_documents, len(ds))))
         self._ds = ds
 
-        # Precompute the domain set (cheap column scan).
         src = self._ds["source_dataset"] if "source_dataset" in self._ds.column_names else None
         if src is not None:
             all_domains = sorted({f"sob/{s or 'text'}" for s in src})
@@ -153,8 +113,6 @@ class SOB(Benchmark):
 
         logger.info("SOB initialized: split=%s, %d records, domains=%s",
                     split, len(self._ds), self._domains)
-
-    # ---- Benchmark interface ------------------------------------------------
 
     @property
     def name(self) -> str:
@@ -175,6 +133,4 @@ class SOB(Benchmark):
             yield doc
 
     def get_schema(self, domain: str) -> dict[str, Any]:
-        # SOB schemas are per-record; there is no single domain-level schema.
-        # Stage 2 uses each Document's own schema, so this is intentionally {}.
         return {}
