@@ -82,7 +82,7 @@ class SOBench(Benchmark):
         *,
         domains: list[str] | None = None,
         max_documents: int | None = None,
-        hf_config: str = "text",     # text / image / audio -- we build for text
+        hf_config: str = "default",    # text / image / audio -- we build for text
         hf_split: str = "train",
         **kwargs: Any,
     ) -> None:
