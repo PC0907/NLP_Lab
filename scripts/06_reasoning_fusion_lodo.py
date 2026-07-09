@@ -6,25 +6,19 @@ built from different feature sets:
 
   - answer        : the field's answer-token activation (the existing approach,
                     and the partner branch's approach).
-  - fused_mean    : answer ⊕ mean-pooled reasoning-trace vector (doc-level).
-  - fused_last    : answer ⊕ the </think> reasoning-summary vector (doc-level).
-  - fused_both    : answer ⊕ both reasoning vectors.
+  - fused_mean    : answer + mean-pooled reasoning-trace vector (doc-level).
+  - fused_last    : answer + the </think> reasoning-summary vector (doc-level).
+  - fused_both    : answer + both reasoning vectors.
 
 The question: does an explicit reasoning-trace representation add error-relevant
 signal beyond what is already linearly accessible at the answer token? A
 positive, LODO-robust gap is the paper's central claim.
 
-This REPLACES the dropped CLAP stage (06_train_clap.py / 07_lodo_clap.py): same
-goal (use the reasoning model's internals better) with a lightweight, stable
-late-fusion logistic-regression probe instead of an unstable cross-layer
-transformer.
-
 Reads the reserved reasoning keys written by 01_extract.save_activations
-(__reasoning_mean__layerN / __reasoning_last__layerN). No re-extraction needed
-beyond a Stage-1 run that captured the reasoning trace.
+(__reasoning_mean__layerN / __reasoning_last__layerN).
 
 Usage:
-    python scripts/06_reasoning_fusion_lodo.py --config configs/exp_deepseek_r1_7b_pooled.yaml
+    python scripts/06_reasoning_fusion_lodo.py --config CFG --layers 16 19 23 26 --jobs -1
 """
 
 from __future__ import annotations
@@ -36,6 +30,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from joblib import Parallel, delayed
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
@@ -46,31 +41,24 @@ logger = logging.getLogger(__name__)
 
 VARIANTS = ("answer", "fused_mean", "fused_last", "fused_both")
 
+# LODO retrains one probe per held-out doc. 200 lbfgs iters converge on these
+# standardized features (max_iter=1000 just burned time hitting the cap); the
+# fold loop is embarrassingly parallel, so we fan it across all cores.
+_MAX_ITER = 200
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Reasoning-fused vs answer-only probe (LODO).")
     p.add_argument("--config", required=True)
     p.add_argument("--layers", type=int, nargs="*", default=None,
                    help="Layers to evaluate (default: all in config).")
+    p.add_argument("--jobs", type=int, default=-1,
+                   help="Parallel workers for the LODO fold loop (default: all cores).")
     p.add_argument("--out-name", type=str, default="reasoning_fusion_lodo.json")
     return p.parse_args()
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
 def load_fusion_docs(activations_dir: Path, labels_dir: Path, layers: list[int]):
-    """Per document: per-field answer activations (one per layer) + the
-    doc-level reasoning vectors. Returns list of dicts:
-
-        {"doc_id", "y": (n,), "answer": {layer: (n, d)},
-         "reasoning_mean": {layer: (d,)}, "reasoning_last": {layer: (d,)}}
-
-    Docs missing the reasoning keys are skipped (so every probe variant is
-    compared on the SAME document set). Fields are filtered to
-    extracted_present=True and to those having all requested answer layers.
-    """
     docs = []
     n_skip_no_reasoning = 0
     for labels_path in sorted(labels_dir.glob("*.json")):
@@ -119,17 +107,8 @@ def load_fusion_docs(activations_dir: Path, labels_dir: Path, layers: list[int])
     return docs
 
 
-# ---------------------------------------------------------------------------
-# Feature construction
-# ---------------------------------------------------------------------------
-
 def build_features(doc: dict, layer: int, variant: str) -> np.ndarray:
-    """(n_fields, d_variant) feature matrix for one doc/layer/variant.
-
-    Reasoning vectors are doc-level (constant across the doc's fields); they are
-    tiled to each field and concatenated to the per-field answer activation.
-    """
-    ans = doc["answer"][layer]                       # (n, d)
+    ans = doc["answer"][layer]
     n = ans.shape[0]
     if variant == "answer":
         return ans
@@ -145,46 +124,60 @@ def build_features(doc: dict, layer: int, variant: str) -> np.ndarray:
 
 
 def _standardize(train: np.ndarray, test: np.ndarray):
-    """Z-score using train statistics only (no leakage); important because the
-    fused features concatenate blocks that may differ in scale."""
     mu = train.mean(axis=0)
     sd = train.std(axis=0)
     sd = np.where(sd < 1e-8, 1.0, sd)
     return (train - mu) / sd, (test - mu) / sd
 
 
-def lodo_eval(docs: list[dict], layer: int, variant: str, *, C: float = 1.0) -> dict:
+def _fit_fold(full_X: np.ndarray, full_y: np.ndarray, lo: int, hi: int, C: float):
+    """Fit one LODO fold: train on all rows except [lo:hi), score that slice."""
+    mask = np.ones(full_y.shape[0], dtype=bool)
+    mask[lo:hi] = False
+    y_tr = full_y[mask]
+    if y_tr.sum() in (0, len(y_tr)):
+        return None
+    X_tr = full_X[mask]
+    X_te = full_X[lo:hi]
+    y_te = full_y[lo:hi]
+    X_tr_s, X_te_s = _standardize(X_tr.astype(np.float64), X_te.astype(np.float64))
+    clf = LogisticRegression(C=C, max_iter=_MAX_ITER, class_weight="balanced")
+    clf.fit(X_tr_s, y_tr)
+    proba = clf.predict_proba(X_te_s)[:, 1]
+    fold_auroc = (float(roc_auc_score(y_te, proba))
+                  if y_te.sum() not in (0, len(y_te)) else None)
+    return y_te, proba, fold_auroc
+
+
+def lodo_eval(docs: list[dict], layer: int, variant: str, *, C: float = 1.0,
+              n_jobs: int = -1) -> dict:
     """Leave-one-document-out evaluation for one (layer, variant).
 
-    Reports TWO metrics, which behave differently for doc-level reasoning
-    features:
-      - per_doc_auroc_mean: mean of per-held-out-document AUROCs. Measures
-        WITHIN-document discrimination. A doc-level reasoning vector is constant
-        across a document's fields, so it cannot change within-doc ranking ->
-        expected ~equal to answer-only for the doc-level (Variant 0) fusion.
-      - pooled_oof_auroc: one AUROC over ALL out-of-fold predictions pooled
-        across documents. Measures GLOBAL ranking of fields across the dataset
-        -- which is what selective regeneration consumes. Doc-level reasoning
-        (some documents are globally more error-prone) CAN help here.
+    per_doc_auroc_mean : mean within-doc AUROC (doc-level reasoning ~ null here).
+    pooled_oof_auroc   : global field ranking across docs (reasoning CAN help).
+    The per-document folds run in parallel; the shared feature matrix is built
+    once and memmapped to workers by joblib.
     """
+    feats = [build_features(d, layer, variant).astype(np.float64) for d in docs]
+    full_X = np.concatenate(feats, axis=0)
+    full_y = np.concatenate([d["y"] for d in docs], axis=0)
+    bounds = np.concatenate([[0], np.cumsum([len(d["y"]) for d in docs])])
+
+    results = Parallel(n_jobs=n_jobs, prefer="processes")(
+        delayed(_fit_fold)(full_X, full_y, int(bounds[i]), int(bounds[i + 1]), C)
+        for i in range(len(docs))
+    )
+
     fold_aurocs = []
     oof_y, oof_p = [], []
-    for i, test_doc in enumerate(docs):
-        train = [d for j, d in enumerate(docs) if j != i]
-        X_tr = np.concatenate([build_features(d, layer, variant) for d in train], axis=0)
-        y_tr = np.concatenate([d["y"] for d in train], axis=0)
-        X_te = build_features(test_doc, layer, variant)
-        y_te = test_doc["y"]
-        if y_tr.sum() in (0, len(y_tr)):
-            continue  # train degenerate -> cannot fit
-        X_tr_s, X_te_s = _standardize(X_tr.astype(np.float64), X_te.astype(np.float64))
-        clf = LogisticRegression(C=C, max_iter=1000, class_weight="balanced")
-        clf.fit(X_tr_s, y_tr)
-        proba = clf.predict_proba(X_te_s)[:, 1]
+    for r in results:
+        if r is None:
+            continue
+        y_te, proba, fold_auroc = r
         oof_y.append(y_te)
         oof_p.append(proba)
-        if y_te.sum() not in (0, len(y_te)):
-            fold_aurocs.append(float(roc_auc_score(y_te, proba)))
+        if fold_auroc is not None:
+            fold_aurocs.append(fold_auroc)
 
     res = {"layer": layer, "variant": variant, "n_valid_folds": len(fold_aurocs),
            "per_doc_auroc_mean": None, "per_doc_auroc_std": None,
@@ -199,10 +192,6 @@ def lodo_eval(docs: list[dict], layer: int, variant: str, *, C: float = 1.0) -> 
             res["pooled_oof_auroc"] = float(roc_auc_score(ally, allp))
     return res
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main() -> int:
     args = parse_args()
@@ -228,9 +217,9 @@ def main() -> int:
     results = {v: {} for v in VARIANTS}
     for L in layers:
         for v in VARIANTS:
-            results[v][str(L)] = lodo_eval(docs, L, v, C=cfg.probe.C)
+            logger.info("LODO: layer %d, variant %s ...", L, v)
+            results[v][str(L)] = lodo_eval(docs, L, v, C=cfg.probe.C, n_jobs=args.jobs)
 
-    # Headline: best layer per variant, for BOTH metrics, + fused-vs-answer gap.
     def best(variant, metric):
         rows = [(int(L), r[metric]) for L, r in results[variant].items()
                 if r.get(metric) is not None]
@@ -239,7 +228,7 @@ def main() -> int:
     summary = {}
     for metric in ("per_doc_auroc_mean", "pooled_oof_auroc"):
         logger.info("=" * 70)
-        logger.info("REASONING-FUSION LODO — metric: %s (best layer per variant)", metric)
+        logger.info("REASONING-FUSION LODO metric: %s (best layer per variant)", metric)
         summary[metric] = {}
         for v in VARIANTS:
             bl, ba = best(v, metric)
@@ -251,11 +240,8 @@ def main() -> int:
             for v in ("fused_mean", "fused_last", "fused_both"):
                 bv = summary[metric][v]["best_auroc"]
                 if bv is not None:
-                    logger.info("  Δ(%s - answer) = %+.4f", v, bv - ans)
+                    logger.info("  delta(%s - answer) = %+.4f", v, bv - ans)
     logger.info("=" * 70)
-    logger.info("Expectation: doc-level reasoning fusion ~ null on per_doc_auroc "
-                "(reasoning constant within a doc) but can help pooled_oof_auroc "
-                "(global field ranking, which selective regeneration uses).")
 
     out = {"layers": layers, "n_docs": len(docs), "n_fields": n_fields,
            "n_errors": n_err, "per_layer": results, "summary": summary}
