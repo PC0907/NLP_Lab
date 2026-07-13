@@ -1,0 +1,90 @@
+# DeepSeek-R1-7B on SOB, re-extraction that ALSO captures per-token reasoning
+# states (for field-localized reasoning attribution, Stage 7).
+#
+# Separate experiment name from deepseek_r1_7b_sob so the existing results are
+# preserved. Generation is greedy (temperature 0), so parsed JSON + labels match
+# the previous run bit-for-bit; only the extra __reasoning_tokens__ arrays and
+# .rtokens.json sidecars are new.
+#
+# The per-token reasoning capture is driven by env in the run script:
+#   REASONING_TOKEN_LAYERS="16,19,23,26"   REASONING_TOKEN_CAP="2048"
+
+experiment:
+  name: "deepseek_r1_7b_sob_attr"
+  seed: 42
+  artifacts_dir: "artifacts"
+
+model:
+  name: "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: false
+  max_new_tokens: 4096
+  temperature: 0.0
+  top_p: 1.0
+
+activations:
+  layers: [1, 4, 7, 10, 12, 14, 16, 18, 19, 21, 23, 24, 26, 28]
+  position: "last_token"
+  dtype: "float16"
+
+data:
+  benchmark: "sob"
+  benchmark_path: "data/sob"
+  split: "test"
+  domains: []
+  max_documents: 300
+  pdf_extractor: "pymupdf"
+
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 0
+
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+  match_mode: "structure_aware"
+
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+
+clap:
+  d_model: 128
+  n_enc: 1
+  dropout: 0.1
+  lr: 5.0e-4
+  epochs: 50
+  batch_size: 64
+  weight_decay: 1.0e-2
+  warmup_epochs: 5
+  patience: 10
+
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"

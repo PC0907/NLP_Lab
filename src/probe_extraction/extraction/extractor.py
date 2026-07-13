@@ -109,6 +109,14 @@ class ExtractionResult:
     # Keys: "reasoning_mean" (mean over trace tokens), "reasoning_last" (the
     # </think> position). Empty for non-reasoning models (no </think>).
     reasoning_activations: dict[str, dict[int, np.ndarray]] = field(default_factory=dict)
+    # Per-token reasoning-trace hidden states for a configured layer subset,
+    # {layer: (n_reasoning_tokens, hidden_dim)}, plus the matching surface
+    # strings of those tokens. Enables OFFLINE field-localized reasoning
+    # attribution (locate where each field's value is mentioned in the trace,
+    # pool exactly those tokens). Empty unless reasoning_token_layers is set on
+    # the Extractor and a </think> boundary was found.
+    reasoning_token_states: dict[int, np.ndarray] = field(default_factory=dict)
+    reasoning_token_strings: list[str] = field(default_factory=list)
 
     @property
     def is_success(self) -> bool:
@@ -157,6 +165,8 @@ class Extractor:
         top_p: float = 1.0,
         include_schema: bool = True,
         max_input_chars: int = 0,
+        reasoning_token_layers: list[int] | None = None,
+        reasoning_token_cap: int = 0,
     ) -> None:
         if position not in self.SUPPORTED_POSITIONS:
             raise ValueError(
@@ -172,6 +182,14 @@ class Extractor:
         self.top_p = top_p
         self.include_schema = include_schema
         self.max_input_chars = max_input_chars
+        # Layers whose per-token reasoning states we persist for offline
+        # attribution (subset of self.layers). None/empty => feature off.
+        self.reasoning_token_layers = (
+            sorted(set(reasoning_token_layers)) if reasoning_token_layers else []
+        )
+        # Optional cap on how many leading reasoning tokens to store per doc
+        # (0 = no cap). Bounds disk when a trace is very long.
+        self.reasoning_token_cap = max(0, int(reasoning_token_cap))
 
         # Sanity-check requested layers against the model up-front so we fail
         # before the first expensive forward pass.
@@ -322,6 +340,13 @@ class Extractor:
                 reasoning_end, len(reasoning_acts.get("reasoning_mean", {})),
             )
 
+        # ------ Capture per-token reasoning states (for offline attribution) ---
+        token_states, token_strings = self._capture_reasoning_tokens(
+            hidden_states=gen_output.hidden_states or {},
+            per_token_strings=per_token_strings,
+            reasoning_end=reasoning_end,
+        )
+
         return ExtractionResult(
             doc_id=doc.doc_id,
             domain=doc.domain,
@@ -336,7 +361,39 @@ class Extractor:
             fields=fields,
             captured_layers=list(self.layers),
             reasoning_activations=reasoning_acts,
+            reasoning_token_states=token_states,
+            reasoning_token_strings=token_strings,
         )
+
+    def _capture_reasoning_tokens(
+        self,
+        *,
+        hidden_states: dict[int, np.ndarray],
+        per_token_strings: list[str],
+        reasoning_end: int,
+    ) -> tuple[dict[int, np.ndarray], list[str]]:
+        """Slice the leading reasoning-trace tokens' hidden states + strings for
+        the configured layer subset. Returns ({}, []) when the feature is off,
+        no </think> was found, or no states were captured."""
+        if not self.reasoning_token_layers or reasoning_end <= 0 or not hidden_states:
+            return {}, []
+        end = reasoning_end
+        if self.reasoning_token_cap > 0:
+            end = min(end, self.reasoning_token_cap)
+        states: dict[int, np.ndarray] = {}
+        for ℓ in self.reasoning_token_layers:
+            arr = hidden_states.get(ℓ)
+            if arr is None or arr.shape[0] == 0:
+                continue
+            e = min(end, arr.shape[0])
+            if e <= 0:
+                continue
+            states[ℓ] = arr[:e].astype(np.float16)
+        if not states:
+            return {}, []
+        # Align strings to the smallest captured length so strings/states match.
+        min_len = min(a.shape[0] for a in states.values())
+        return states, list(per_token_strings[:min_len])
 
     # ------------------------------------------------------------------------
     # Internal: activation slicing

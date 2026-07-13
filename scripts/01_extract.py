@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -116,6 +117,19 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
 # Persistence
 # ============================================================================
 
+def _parse_reasoning_token_layers(spec: str, available: list[int]) -> list[int]:
+    """Parse REASONING_TOKEN_LAYERS ("16,19,23,26") into a sorted subset of the
+    layers actually being captured. Empty/invalid -> [] (capture disabled)."""
+    if not spec.strip():
+        return []
+    want = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if part.isdigit():
+            want.add(int(part))
+    return sorted(want & set(available))
+
+
 def save_extraction_metadata(
     result: ExtractionResult,
     extractions_dir: Path,
@@ -184,11 +198,26 @@ def save_activations(
         for layer, vec in per_layer.items():
             arrays[f"__{pool_name}__layer{layer}"] = vec
 
+    # Per-token reasoning-trace states for offline field-localized attribution.
+    # Key "__reasoning_tokens__layer{N}" -> (n_reasoning_tokens, hidden_dim).
+    # Reserved "__" prefix is ignored by existing per-field loaders. The aligned
+    # token surface strings go to a small JSON sidecar (variable-length text
+    # doesn't belong in an npz).
+    token_states = getattr(result, "reasoning_token_states", {})
+    for layer, mat in token_states.items():
+        arrays[f"__reasoning_tokens__layer{layer}"] = mat
+
     if not arrays:
         return  # nothing to save
 
     out_path = activations_dir / f"{result.doc_id}.npz"
     np.savez_compressed(out_path, **arrays)
+
+    token_strings = getattr(result, "reasoning_token_strings", [])
+    if token_states and token_strings:
+        side = activations_dir / f"{result.doc_id}.rtokens.json"
+        with side.open("w", encoding="utf-8") as fh:
+            json.dump(token_strings, fh, ensure_ascii=False)
 
 
 def write_summary(
@@ -293,6 +322,18 @@ def main() -> int:
         hf_token=hf_token,
     )
 
+    # ------ Reasoning-token capture (for offline field-localized attribution) --
+    # Persist per-token reasoning states for a small layer subset. Controlled by
+    # env so no config schema change is needed:
+    #   REASONING_TOKEN_LAYERS="16,19,23,26"  (empty string disables capture)
+    #   REASONING_TOKEN_CAP="2048"            (0 = no cap)
+    rt_layers = _parse_reasoning_token_layers(
+        os.environ.get("REASONING_TOKEN_LAYERS", ""), cfg.activations.layers,
+    )
+    rt_cap = int(os.environ.get("REASONING_TOKEN_CAP", "0") or "0")
+    if rt_layers:
+        logger.info("Reasoning-token capture ON for layers %s (cap=%d).", rt_layers, rt_cap)
+
     # ------ Build extractor ------
     extractor = Extractor(
         llm=llm,
@@ -303,6 +344,8 @@ def main() -> int:
         top_p=cfg.model.top_p,
         include_schema=cfg.extraction.include_schema,
         max_input_chars=cfg.extraction.max_input_chars,
+        reasoning_token_layers=rt_layers,
+        reasoning_token_cap=rt_cap,
     )
 
     if args.dry_run:
