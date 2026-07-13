@@ -46,3 +46,4 @@ logs/
 *.tmp
 .cache/
 datasets/
+sob_results.tgz
