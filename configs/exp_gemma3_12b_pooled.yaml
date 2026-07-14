@@ -1,11 +1,15 @@
 experiment:
-  name: "gemma4_12b_pooled"
+  name: "gemma3_12b_pooled"
 seed: 42
 artifacts_dir: "artifacts"
 model:
-  # Gemma-4-12B-it (released ~July 2026). NOTE: listed as "Any-to-Any" (multimodal)
-  # -- may need a non-CausalLM auto-class and a very recent transformers. VERIFY.
-  name: "google/gemma-4-12B-it"
+  # Gemma-3-12B-it: conventional causal LM (unlike gemma-4's multimodal
+  # "gemma4_unified" arch, which your transformers doesn't support). Different
+  # family from Qwen -> gives the cross-architecture generalization claim.
+  # ~24GB at bf16 -> fits an A40 (46GB).
+  # NOTE: Gemma is licence-gated on HF -- accept the licence with the account
+  # tied to your HF token, or the download 401s.
+  name: "google/gemma-3-12b-it"
   dtype: "bfloat16"
   quantization: "none"
   device_map: "auto"
@@ -14,14 +18,15 @@ model:
   temperature: 0.0
   top_p: 1.0
 activations:
-  # Gemma-3-12B has ~48 layers (VERIFY). Band spans early->late; adjust once the
-  # smoke test confirms llm.num_layers. Only used for the FULL run, not the smoke test.
-  layers: [4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44]
+  # PLACEHOLDER BAND. The smoke test prints llm.num_layers -- set this properly
+  # (mid-network band, mirroring the Qwen setup) BEFORE the full extraction run.
+  # Clipping the band would force a costly re-extraction.
+  layers: [4, 8, 12, 16, 20, 24, 28, 32, 36, 40]
   position: "last_token"
   dtype: "float16"
 data:
   benchmark: "extract_bench"
-  benchmark_path: "data/extract-bench"    # VERIFY: match your other configs
+  benchmark_path: "data/extract-bench"    # VERIFY: match your working Qwen configs
   domains:
     - "academic/research"
     - "finance/credit_agreement"

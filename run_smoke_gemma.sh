@@ -19,4 +19,4 @@ cd ~/NLP_Lab
 echo "=== gpu ==="; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
 # Test on an ACADEMIC doc first (nested schema -- the kind that broke Llama).
-python smoke_test_gemma.py --config configs/exp_gemma4_12b_pooled.yaml --doc-index 0
+python smoke_test_gemma.py --config configs/exp_gemma3_12b_pooled.yaml --doc-index 0
