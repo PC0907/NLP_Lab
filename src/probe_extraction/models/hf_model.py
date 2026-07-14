@@ -138,8 +138,25 @@ class HuggingFaceLLM(LLM):
         self.model.eval()  # No training; ensures dropout off, etc.
 
         # Cache config-derived values so we don't re-fetch every call.
-        self._num_layers: int = self.model.config.num_hidden_layers
-        self._hidden_dim: int = self.model.config.hidden_size
+        # Some models (e.g. Gemma-3, which is multimodal) nest the text-model
+        # settings under config.text_config rather than exposing them at the top
+        # level like Qwen. Look in both places.
+        _cfg = self.model.config
+        _txt = getattr(_cfg, "text_config", None)
+
+        def _cfg_attr(name: str) -> int:
+            val = getattr(_cfg, name, None)
+            if val is None and _txt is not None:
+                val = getattr(_txt, name, None)
+            if val is None:
+                raise ValueError(
+                    f"Could not determine '{name}' from {type(_cfg).__name__} "
+                    f"(checked top level and .text_config)."
+                )
+            return int(val)
+
+        self._num_layers: int = _cfg_attr("num_hidden_layers")
+        self._hidden_dim: int = _cfg_attr("hidden_size")
 
         logger.info(
             "Model loaded: %d layers, hidden_dim=%d, device=%s",
