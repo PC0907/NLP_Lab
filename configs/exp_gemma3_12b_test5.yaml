@@ -1,0 +1,68 @@
+experiment:
+  name: "gemma3_12b_test5"
+seed: 42
+artifacts_dir: "artifacts"
+model:
+  name: "google/gemma-3-12b-it"
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: true
+  # LOWERED to 8192: at 32768 Gemma generated to the cap (rambling past the JSON),
+  # causing 33-min/doc runtimes AND OOM even on 80GB (huge KV cache + 12-layer
+  # activation capture). 8192 is ample for the actual structured output; forces
+  # Gemma to finish the JSON and stop. A few truncations >> constant OOMs.
+  max_new_tokens: 8192
+  temperature: 0.0
+  top_p: 1.0
+activations:
+  # Gemma-3-12B: 48 layers, hidden 3840 (confirmed). Band spans the full depth
+  # with denser mid-network sampling (~30-65% relative depth = layers 14-32),
+  # where Qwen's trust signal peaked. Wide enough that nested-LODO can find the
+  # peak without clipping. 12 layers x ~3840 dims captured per field.
+  layers: [4, 8, 12, 16, 20, 22, 24, 26, 28, 32, 36, 40]
+  position: "last_token"
+  dtype: "float16"
+data:
+  benchmark: "extract_bench"
+  benchmark_path: "data/extract-bench"    # VERIFY matches your Qwen configs
+  domains:
+    - "academic/research"
+    - "finance/credit_agreement"
+    - "sport/swimming"
+  max_documents: 5
+  pdf_extractor: "pymupdf"
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 600000
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"
