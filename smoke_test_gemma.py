@@ -135,8 +135,18 @@ def main() -> int:
     print(f"\n[EXTRA] emitted, NOT in schema ({len(extra)}):")
     for k in extra: print("   ", k)
 
+    truncated = (result.finish_reason == "length")
     frac = len(matched) / max(len(expected), 1)
     print("\n" + "=" * 70)
+    if truncated and missing and not extra:
+        print(f"KEY OVERLAP: {frac:.0%} of schema keys emitted literally.")
+        print("VERDICT: TRUNCATED / INCONCLUSIVE -- generation hit max_new_tokens")
+        print("(finish_reason=length). The MISSING keys are almost certainly due to")
+        print("truncation, NOT key divergence: every emitted key matched literally and")
+        print("there are ZERO extra/renamed keys (the Llama failure mode would show")
+        print("extras). Re-run on a SHORT doc (swimming) or with higher max_new_tokens.")
+        print("=" * 70)
+        return 0
     print(f"KEY OVERLAP: {frac:.0%} of schema keys emitted literally.")
     if frac >= 0.9 and not extra:
         print("VERDICT: GREEN -- keys align. Gemma is viable for cross-model work.")

@@ -25,4 +25,4 @@ echo "=== gpu ==="; nvidia-smi --query-gpu=name,memory.total --format=csv,nohead
 # Doc 0 is an academic paper (long). If this still OOMs, point --doc-index at a
 # short swimming doc -- the smoke test only checks KEY STRUCTURE, so a short
 # document answers the question just as well.
-python smoke_test_gemma.py --config configs/exp_gemma3_12b_pooled.yaml --doc-index 0
+python smoke_test_gemma.py --config configs/exp_gemma3_12b_swim.yaml --doc-index 0
