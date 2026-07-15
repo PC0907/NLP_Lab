@@ -43,3 +43,4 @@ logs/
 *.tmp
 .cache/
 datasets/
+*.bak
