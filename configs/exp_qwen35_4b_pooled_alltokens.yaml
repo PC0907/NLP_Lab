@@ -1,7 +1,7 @@
 experiment:
-  name: "qwen35_4b_sob_text"
-seed: 42
-artifacts_dir: "artifacts"
+  name: "qwen35_4b_pooled_alltokens"
+  seed: 42
+  artifacts_dir: "artifacts"
 model:
   name: "Qwen/Qwen3.5-4B"
   dtype: "bfloat16"
@@ -13,15 +13,15 @@ model:
   top_p: 1.0
 activations:
   layers: [1, 4, 8, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32]
-  position: "last_token"
+  position: "all"
   dtype: "float16"
 data:
-  benchmark: "sob"
-  benchmark_path: ""
+  benchmark: "extract_bench"
+  benchmark_path: "data/extract-bench"
   domains:
-    - "sob/text"
-  max_documents: 50          # SMOKE SLICE first; raise to null for full run
-  pdf_extractor: "pymupdf"    # ignored (text-native)
+    - "academic/research"
+  max_documents: null
+  pdf_extractor: "pymupdf"
 extraction:
   prompt_template: "default"
   include_schema: true
