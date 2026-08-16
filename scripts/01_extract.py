@@ -44,6 +44,7 @@ from probe_extraction.data.extract_bench import ExtractBench
 from probe_extraction.extraction import Extractor, ExtractionResult
 from probe_extraction.models import HuggingFaceLLM
 from probe_extraction.utils.logging import setup_logging
+from probe_extraction.utils.resume import already_extracted, parse_shard
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,28 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Load model and benchmark, but exit before generating.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip documents already extracted in this experiment's artifacts. "
+            "Generation is greedy, so a resumed run reproduces what a single "
+            "long run would have produced -- this exists so a multi-thousand "
+            "document extraction can survive a SLURM time limit, and so "
+            "scaling an existing run only pays for the NEW documents."
+        ),
+    )
+    parser.add_argument(
+        "--shard",
+        type=str,
+        default=None,
+        metavar="I/N",
+        help=(
+            "Process only shard I of N (1-based), striding through the "
+            "document list. Lets several GPU jobs split one extraction; each "
+            "writes disjoint files, so they can run concurrently."
+        ),
     )
     return parser.parse_args()
 
@@ -352,10 +375,31 @@ def main() -> int:
         logger.info("Dry run: model and benchmark loaded successfully. Exiting.")
         return 0
 
+    # ------ Select this run's documents (sharding + resume) ------
+    shard_i, shard_n = parse_shard(args.shard)
+    todo, n_skipped = [], 0
+    for idx, doc in enumerate(benchmark):
+        if idx % shard_n != shard_i:
+            continue
+        if args.resume and already_extracted(
+                doc.doc_id, extractions_dir, activations_dir, bool(rt_layers)):
+            n_skipped += 1
+            continue
+        todo.append(doc)
+
+    if shard_n > 1:
+        logger.info("Shard %d/%d: %d of %d documents.",
+                    shard_i + 1, shard_n, len(todo) + n_skipped, len(benchmark))
+    if args.resume:
+        logger.info("Resume: %d already complete, %d to extract.", n_skipped, len(todo))
+    if not todo:
+        logger.info("Nothing to do -- every selected document is already extracted.")
+        return 0
+
     # ------ Run extraction ------
     results: list[ExtractionResult] = []
     run_start = time.perf_counter()
-    for doc in tqdm(benchmark, desc="Extracting", total=len(benchmark)):
+    for doc in tqdm(todo, desc="Extracting", total=len(todo)):
         try:
             result = extractor.extract(doc)
         except Exception as e:
@@ -385,7 +429,14 @@ def main() -> int:
     total_elapsed = time.perf_counter() - run_start
 
     # ------ Summary ------
-    summary_path = extractions_dir / "_summary.json"
+    # A sharded or resumed run only saw part of the corpus, so it must not
+    # overwrite the full run's summary with a partial one.
+    if shard_n > 1:
+        summary_path = extractions_dir / f"_summary_shard{shard_i + 1}of{shard_n}.json"
+    elif n_skipped:
+        summary_path = extractions_dir / "_summary_resume.json"
+    else:
+        summary_path = extractions_dir / "_summary.json"
     write_summary(results, summary_path, total_elapsed)
 
     # Recompute aggregates for the final log line. Single pass, no surprises.

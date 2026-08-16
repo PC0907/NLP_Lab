@@ -105,7 +105,12 @@ def load_attribution_docs(activations_dir: Path, labels_dir: Path,
             keys = set(npz.keys())
             rtok_states = {L: npz[f"__reasoning_tokens__layer{L}"]
                            for L in layers if f"__reasoning_tokens__layer{L}" in keys}
-            if not rtok_states or not token_strings:
+            # Require EVERY requested layer, not just some. A run that was
+            # resumed/extended with a narrower REASONING_TOKEN_LAYERS leaves
+            # documents holding only a subset; taking those would give each
+            # layer a different document set (and break the paired tests that
+            # compare layers against each other).
+            if set(rtok_states) != set(layers) or not token_strings:
                 n_skip += 1
                 continue
 
@@ -113,6 +118,7 @@ def load_attribution_docs(activations_dir: Path, labels_dir: Path,
             attr_rows = {L: [] for L in layers}
             scalar_rows = []
             y_list = []
+            path_strs = []
             for fld in data.get("labels", []):
                 if not fld.get("extracted_present", False):
                     continue
@@ -125,11 +131,16 @@ def load_attribution_docs(activations_dir: Path, labels_dir: Path,
                     attr_rows[L].append(out["attr_vec"][L].astype(np.float32))
                 scalar_rows.append(ra.features_to_array(out["features"]))
                 y_list.append(int(fld["is_error"]))
+                path_strs.append(ps)
 
             if not y_list:
                 continue
             docs.append({
                 "doc_id": doc_id,
+                # Field identity is kept so downstream stages (Stage 9's
+                # selective-regeneration curves) can join these rows against the
+                # per-field token-logprob baselines by path.
+                "path_strs": path_strs,
                 "y": np.array(y_list, dtype=np.int64),
                 "answer": {L: np.stack(ans_rows[L], 0) for L in layers},
                 "attr": {L: np.stack(attr_rows[L], 0) for L in layers},
