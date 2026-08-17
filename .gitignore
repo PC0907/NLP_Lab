@@ -47,3 +47,4 @@ logs/
 .cache/
 datasets/
 sob_results.tgz
+*.bak.*

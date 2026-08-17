@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=A100medium
 #SBATCH --export=NONE
-#SBATCH --time=8:00:00
+#SBATCH --time=16:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
@@ -47,9 +47,13 @@ echo "=== STAGE 02: Label (structure_aware) ==="
 python scripts/02_label.py --config "$CFG"
 
 echo ""
-echo "=== STAGE 07: Field-localized attribution LODO (4 layers) ==="
+# Layer 19 was pre-committed from the 300-doc run, so restricting the scaled
+# analysis to it (plus 23 as a confirmation layer) is both cheaper and more
+# rigorous -- it removes the post-hoc layer-selection criticism. The 4-layer
+# robustness sweep already exists at 300 docs and stays in the paper.
+echo "=== STAGE 07: Field-localized attribution LODO (pre-committed layers) ==="
 python scripts/07_reasoning_attribution_lodo.py --config "$CFG" \
-    --layers 16 19 23 26 --jobs -1
+    --layers 19 23 --jobs -1
 
 echo ""
 echo "=== STAGE 08: Controls (localization, Holm, bootstrap, mentions) ==="
