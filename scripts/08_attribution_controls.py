@@ -75,7 +75,12 @@ ra = _load_by_path("reasoning_attribution",
 s7 = _load_by_path("stage07", "scripts/07_reasoning_attribution_lodo.py")
 
 # The claim + its controls. `answer` is the baseline all deltas are measured from.
-VARIANTS = ("answer", "fused_attr", "ctrl_docmean", "ctrl_shuffled", "ctrl_random")
+VARIANTS = ("answer", "fused_attr", "ctrl_docmean", "ctrl_tracemean",
+            "ctrl_shuffled", "ctrl_random")
+
+# Variants needing the Stage-6 whole-trace pooled vector rather than the
+# per-token attribution states.
+NEEDS_TRACE_MEAN = ("ctrl_tracemean",)
 
 
 def parse_args() -> argparse.Namespace:
@@ -88,8 +93,36 @@ def parse_args() -> argparse.Namespace:
                    help="Seeds to average the within-document shuffle control over.")
     p.add_argument("--bootstrap", type=int, default=2000,
                    help="Document-level bootstrap resamples for the delta CI (0 = off).")
+    p.add_argument("--variants", type=str, nargs="*", default=None,
+                   choices=list(VARIANTS),
+                   help="Subset of variants to run (default: all). `answer` is "
+                        "always included since every delta is measured from it.")
     p.add_argument("--out-name", type=str, default="attribution_controls.json")
     return p.parse_args()
+
+
+def load_trace_means(activations_dir: Path, docs, layers: list[int],
+                     pool: str = "reasoning_mean") -> int:
+    """Attach each document's Stage-6 whole-trace pooled reasoning vector.
+
+    Returns the number of documents that have it at every requested layer;
+    documents without it get no `trace_mean` key, and the caller drops the
+    trace-mean variant unless every document is covered (a partial set would
+    silently change the document population between variants).
+    """
+    n_ok = 0
+    for d in docs:
+        path = activations_dir / f"{d['doc_id']}.npz"
+        if not path.exists():
+            continue
+        with np.load(path) as npz:
+            keys = set(npz.keys())
+            wanted = {L: f"__{pool}__layer{L}" for L in layers}
+            if not all(k in keys for k in wanted.values()):
+                continue
+            d["trace_mean"] = {L: npz[k].astype(np.float32) for L, k in wanted.items()}
+            n_ok += 1
+    return n_ok
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +143,14 @@ def build_control_features(doc: dict, layer: int, variant: str,
     elif variant == "ctrl_docmean":
         # Same vectors, collapsed to one per document -> constant within doc.
         block = np.repeat(attr.mean(axis=0, keepdims=True), attr.shape[0], axis=0)
+    elif variant == "ctrl_tracemean":
+        # The WHOLE reasoning trace pooled per document (Stage 6's vector), also
+        # constant within doc. Paired against ctrl_docmean this isolates the one
+        # thing that differs between them: WHICH reasoning tokens get pooled.
+        # ctrl_docmean pools only the value-mentioning tokens; this pools all of
+        # them. Same granularity, same dimensionality -- only the selection.
+        tm = doc["trace_mean"][layer]
+        block = np.repeat(tm.reshape(1, -1), attr.shape[0], axis=0)
     elif variant == "ctrl_shuffled":
         # Same vectors, wrong fields. A 1-field doc cannot be shuffled; it
         # contributes an identical row, which is correct (nothing to break).
@@ -287,8 +328,24 @@ def main() -> int:
     n_multi = sum(1 for d in docs if len(d["y"]) > 1)
     logger.info("Loaded %d docs (%d with >1 field), %d fields, %d errors (%.1f%%).",
                 len(docs), n_multi, n_fields, n_err, 100 * n_err / max(n_fields, 1))
-    logger.info("Controls at layers %s | shuffle reps %d | bootstrap %d",
-                layers, args.shuffle_reps, args.bootstrap)
+    variants = tuple(args.variants) if args.variants else VARIANTS
+    if "answer" not in variants:
+        variants = ("answer",) + variants
+
+    # The whole-trace pooled vector lives in the same npz as everything else,
+    # but only if Stage 1 captured it. Drop the variant rather than run it on a
+    # different document population.
+    if any(v in NEEDS_TRACE_MEAN for v in variants):
+        n_ok = load_trace_means(activations_dir, docs, layers)
+        if n_ok < len(docs):
+            logger.warning("Whole-trace pooled vectors present for only %d/%d docs "
+                           "-- dropping %s.", n_ok, len(docs), NEEDS_TRACE_MEAN)
+            variants = tuple(v for v in variants if v not in NEEDS_TRACE_MEAN)
+        else:
+            logger.info("Whole-trace pooled vectors loaded for all %d docs.", n_ok)
+
+    logger.info("Controls at layers %s | variants %s | shuffle reps %d | bootstrap %d",
+                layers, list(variants), args.shuffle_reps, args.bootstrap)
 
     # Interpretable, probe-free signal first -- it stands on its own.
     mention = mention_analysis(docs)
@@ -306,7 +363,7 @@ def main() -> int:
         logger.info("=" * 70)
         logger.info("LAYER %d", L)
         res = {}
-        for v in VARIANTS:
+        for v in variants:
             if v == "ctrl_shuffled":
                 logger.info("  LODO: %s (%d seeds) ...", v, args.shuffle_reps)
                 runs = [lodo_eval_variant(docs, L, v, C=cfg.probe.C,
@@ -340,13 +397,21 @@ def main() -> int:
             "fused_attr_vs_docmean": ("ctrl_docmean", "fused_attr"),
             "fused_attr_vs_shuffled": ("ctrl_shuffled", "fused_attr"),
             "fused_attr_vs_random": ("ctrl_random", "fused_attr"),
-            # Controls vs answer: each of these SHOULD be ~null. Reporting them
-            # keeps us honest -- a control that also beats answer would mean the
-            # gain is not about localization after all.
+            # Controls vs answer. shuffled/random SHOULD be ~null; if docmean is
+            # NOT null, the gain is a document-level effect rather than a
+            # field-localized one, and fused_attr_vs_docmean will show no gap.
             "docmean_vs_answer": ("answer", "ctrl_docmean"),
             "shuffled_vs_answer": ("answer", "ctrl_shuffled"),
             "random_vs_answer": ("answer", "ctrl_random"),
+            # The selection test: value-mention tokens vs the whole trace, both
+            # pooled to one vector per document. This is what separates "which
+            # tokens you pool matters" from "any document-level reasoning
+            # summary would do".
+            "tracemean_vs_answer": ("answer", "ctrl_tracemean"),
+            "docmean_vs_tracemean": ("ctrl_tracemean", "ctrl_docmean"),
         }
+        comparisons = {k: v for k, v in comparisons.items()
+                       if v[0] in variants and v[1] in variants}
         sig = {}
         for name, (base, test) in comparisons.items():
             md, p, n = s7.paired_test(res[base]["_per_doc"], res[test]["_per_doc"])
@@ -380,6 +445,7 @@ def main() -> int:
 
     out = {"layers": layers, "n_docs": len(docs), "n_docs_multifield": n_multi,
            "n_fields": n_fields, "n_errors": n_err,
+           "variants": list(variants),
            "shuffle_reps": args.shuffle_reps, "bootstrap": args.bootstrap,
            "mention_analysis": mention,
            "per_layer": all_results, "significance": all_sig}
