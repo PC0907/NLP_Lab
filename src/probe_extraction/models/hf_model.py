@@ -338,10 +338,14 @@ class HuggingFaceLLM(LLM):
         eos_ids = []
         if self.tokenizer.eos_token_id is not None:
             eos_ids.append(self.tokenizer.eos_token_id)
-        im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
-        if im_end_id is not None and im_end_id != self.tokenizer.unk_token_id:
-            if im_end_id not in eos_ids:
-                eos_ids.append(im_end_id)
+        # Chat end-of-turn markers vary by model family:
+        #   Qwen3+  -> <|im_end|>
+        #   Gemma-3 -> <end_of_turn>
+        for turn_end_token in ("<|im_end|>", "<end_of_turn>"):
+            turn_end_id = self.tokenizer.convert_tokens_to_ids(turn_end_token)
+            if turn_end_id is not None and turn_end_id != self.tokenizer.unk_token_id:
+                if turn_end_id not in eos_ids:
+                    eos_ids.append(turn_end_id)
         
         gen_kwargs: dict[str, Any] = {
             "input_ids": input_ids,
