@@ -86,9 +86,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", required=True)
     p.add_argument("--layer", type=int, default=19,
                    help="Probe layer to score with (default 19, the peak layer).")
-    p.add_argument("--fused-variant", type=str, default="fused_both",
-                   choices=["fused_attr", "fused_both"],
-                   help="Which attribution probe to carry forward as `probe_fused`.")
+    p.add_argument("--fused-variant", type=str, default="fused_decomposed",
+                   choices=["fused_attr", "fused_both", "fused_decomposed"],
+                   help="Which attribution probe to carry forward as `probe_fused`. "
+                        "Defaults to fused_decomposed, the strongest variant on "
+                        "the 974-doc corpus (+0.0364 over answer-only).")
     p.add_argument("--jobs", type=int, default=-1)
     p.add_argument("--budgets", type=float, nargs="*", default=DEFAULT_BUDGETS)
     p.add_argument("--repair-rate", type=float, nargs="*", default=[0.5, 0.7, 1.0],

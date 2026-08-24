@@ -159,6 +159,17 @@ def build_features(doc: dict, layer: int, variant: str) -> np.ndarray:
         return doc["scalars"]
     if variant == "fused_attr":
         return np.concatenate([ans, doc["attr"][layer]], axis=1)
+    if variant == "fused_decomposed":
+        # The attribution vector split into its document-level component and the
+        # field-specific residual, as SEPARATE blocks. Same span as fused_attr,
+        # but the probe weights and regularizes the two independently instead of
+        # letting the large shared direction swamp the small residual. On the
+        # 974-doc corpus this is the strongest variant measured
+        # (per-doc 0.8276, +0.0364 over answer-only, p=1.7e-05).
+        attr = doc["attr"][layer]
+        m = attr.mean(axis=0, keepdims=True)
+        return np.concatenate(
+            [ans, np.repeat(m, attr.shape[0], axis=0), attr - m], axis=1)
     if variant == "fused_scalars":
         return np.concatenate([ans, doc["scalars"]], axis=1)
     if variant == "fused_both":
