@@ -38,8 +38,15 @@ import matplotlib
 matplotlib.use("Agg")  # headless cluster node
 import matplotlib.pyplot as plt
 
-from probe_extraction.config import load_config
-from probe_extraction.utils.logging import setup_logging
+# Unlike the sbatch stages, this one is meant to be run by hand on a login node,
+# where PYTHONPATH is usually unset. Put the repo's src/ on the path so
+# `python scripts/10_make_figures.py ...` works without any prefix.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from probe_extraction.config import load_config  # noqa: E402
+from probe_extraction.utils.logging import setup_logging  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +77,15 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build the paper's figures.")
     p.add_argument("--config", required=True)
     p.add_argument("--outdir", type=str, default="figures")
-    p.add_argument("--controls-name", type=str, default="attribution_controls.json",
-                   help="Which controls file to plot (selection_test.json also works).")
+    p.add_argument("--controls-name", type=str, nargs="*",
+                   default=["decomposition_test.json", "selection_test.json",
+                            "attribution_controls.json"],
+                   help="Control result files merged for F3, in order. The "
+                        "variants were produced across several runs, so all "
+                        "three are merged by default; missing files are skipped.")
+    p.add_argument("--regen-name", type=str, default="selective_regeneration_final.json",
+                   help="Selective-regeneration results for F4. Falls back to "
+                        "selective_regeneration.json when absent.")
     return p.parse_args()
 
 
@@ -153,40 +167,62 @@ def figure_layers(probes_summary, comparison, outdir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 PRETTY = {
+    "fused_decomposed": "Decomposed\n(doc mean + residual)",
     "fused_attr": "Field-localized\nattribution",
     "fused_both": "Attribution\n+ scalars",
     "ctrl_docmean": "Document mean\nof same vectors",
     "ctrl_tracemean": "Whole trace,\npooled per doc",
+    "ctrl_centered": "Field residual\nonly",
+    "ctrl_docmean_pad": "Doc mean + noise\n(width control)",
     "ctrl_shuffled": "Shuffled across\nfields (control)",
     "ctrl_random": "Random vectors\n(control)",
 }
-# Which paired comparison gives each variant's delta against `answer`.
+# Which paired comparison gives each variant's delta against `answer`. Bars are
+# drawn in this order, so proposed methods come before controls.
 VS_ANSWER = {
+    "fused_decomposed": "decomposed_vs_answer",
     "fused_attr": "fused_attr_vs_answer",
     "ctrl_docmean": "docmean_vs_answer",
     "ctrl_tracemean": "tracemean_vs_answer",
+    "ctrl_centered": "centered_vs_answer",
+    "ctrl_docmean_pad": "docmean_pad_vs_answer",
     "ctrl_shuffled": "shuffled_vs_answer",
     "ctrl_random": "random_vs_answer",
 }
+# Proposed methods (coloured); everything else is a control (grey). Explicit
+# membership rather than substring matching, which silently mislabels new names.
+CLAIM_VARIANTS = {"fused_decomposed", "fused_attr", "fused_both"}
 
 
-def figure_controls(controls, outdir: Path, layer: str | None = None) -> None:
-    if not controls:
+def figure_controls(controls_list, outdir: Path, layer: str | None = None) -> None:
+    """F3 from one or more control result files.
+
+    The variants are spread across separate runs (the shuffled/random controls
+    came from one job, the decomposition variants from another), so the
+    significance blocks are merged here. Later files win on a key collision.
+    """
+    controls_list = [c for c in controls_list if c]
+    if not controls_list:
         return
-    sig_all = controls.get("significance", {})
-    if not sig_all:
+
+    merged_sig: dict[str, dict] = {}
+    for c in controls_list:
+        for L, block in (c.get("significance") or {}).items():
+            merged_sig.setdefault(L, {}).update(block)
+    if not merged_sig:
         logger.warning("  no significance block -- skipping F3.")
         return
-    layer = layer or sorted(sig_all.keys(), key=int)[0]
-    sig = sig_all[layer]
+    layer = layer or sorted(merged_sig.keys(), key=int)[0]
+    sig = merged_sig[layer]
 
-    names, deltas, los, his, ps = [], [], [], [], []
+    names, deltas, los, his, ps, keys = [], [], [], [], [], []
     for v, key in VS_ANSWER.items():
         s = sig.get(key)
         if not s or s.get("mean_delta") is None:
             continue
         b = s.get("bootstrap") or {}
         names.append(PRETTY.get(v, v))
+        keys.append(v)
         deltas.append(s["mean_delta"])
         los.append(s["mean_delta"] - (b.get("ci_low", s["mean_delta"])))
         his.append((b.get("ci_high", s["mean_delta"])) - s["mean_delta"])
@@ -194,37 +230,46 @@ def figure_controls(controls, outdir: Path, layer: str | None = None) -> None:
     if not names:
         logger.warning("  no plottable comparisons -- skipping F3.")
         return
+    logger.info("  F3 variants: %s", keys)
 
-    # The claim is coloured; the controls are grey. That is the whole argument:
-    # if a grey bar matches the coloured one, the claim is not what we think.
-    colours = [C["claim"] if ("attribution" in n and "Document" not in n)
-               else C["control"] for n in names]
+    # The proposed methods are coloured; the controls are grey. That IS the
+    # argument: a grey bar matching a coloured one means the claim is not what
+    # it appears to be -- which is exactly what ctrl_docmean shows here.
+    colours = [C["claim"] if v in CLAIM_VARIANTS else C["control"] for v in keys]
 
-    fig, ax = plt.subplots(figsize=(7.2, 4.0))
+    # ~1.45in per bar keeps the two-line tick labels from colliding once the
+    # full control set (8 bars) is present.
+    fig, ax = plt.subplots(figsize=(max(7.2, 1.45 * len(names)), 4.2))
     xs = range(len(names))
     ax.bar(xs, deltas, yerr=[los, his], capsize=4, color=colours,
            edgecolor="black", linewidth=0.6, error_kw=dict(lw=1.1, ecolor="#333"))
     ax.axhline(0, color="black", lw=1.0)
 
+    # Headroom so the significance markers clear the whisker caps.
+    span = max(d + h for d, h in zip(deltas, his)) - min(
+        min(d - l for d, l in zip(deltas, los)), 0.0)
+    pad = 0.06 * span
     for x, (d, p) in enumerate(zip(deltas, ps)):
         if p is None:
             continue
         star = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "n.s."
-        top = d + his[x]
-        ax.text(x, top + 0.0022, star, ha="center", fontsize=9,
+        ax.text(x, d + his[x] + pad * 0.35, star, ha="center", fontsize=9,
                 color="#111" if star != "n.s." else "#777")
+    ax.set_ylim(min(min(d - l for d, l in zip(deltas, los)), 0.0) - pad * 0.5,
+                max(d + h for d, h in zip(deltas, his)) + pad * 1.6)
 
     ax.set_xticks(list(xs))
-    ax.set_xticklabels(names, fontsize=8)
+    ax.set_xticklabels(names, fontsize=7.5)
     ax.set_ylabel("Δ per-document AUROC vs answer-only")
-    ax.set_title(f"Every variant adds the same 3,584 dimensions (layer {layer})\n"
-                 "95% bootstrap CI over documents; Holm-corrected significance",
-                 fontsize=10)
+    ax.set_title(f"Reasoning variants vs the answer-only probe (layer {layer})\n"
+                 "coloured = proposed, grey = control; 95% bootstrap CI over "
+                 "documents, Holm-corrected", fontsize=10)
     ax.grid(axis="y", alpha=0.25, lw=0.6)
     _save(fig, outdir, "F3_controls")
     _csv(outdir, "F3_controls",
-         ["variant", "delta_vs_answer", "ci_low", "ci_high", "p_holm"],
-         [[n, d, d - l, d + h, p] for n, d, l, h, p in zip(names, deltas, los, his, ps)])
+         ["variant", "label", "delta_vs_answer", "ci_low", "ci_high", "p_holm"],
+         [[k, n.replace("\n", " "), d, d - l, d + h, p]
+          for k, n, d, l, h, p in zip(keys, names, deltas, los, his, ps)])
 
 
 # ---------------------------------------------------------------------------
@@ -307,13 +352,12 @@ def main() -> int:
                   _load(results / "comparison.json"), outdir)
 
     logger.info("F3: controls")
-    controls = _load(results / args.controls_name)
-    if controls is None and args.controls_name != "attribution_controls.json":
-        controls = _load(results / "attribution_controls.json")
-    figure_controls(controls, outdir)
+    figure_controls([_load(results / n) for n in args.controls_name], outdir)
 
     logger.info("F4: selective regeneration")
-    regen = _load(results / "selective_regeneration.json")
+    regen = _load(results / args.regen_name)
+    if regen is None:
+        regen = _load(results / "selective_regeneration.json")
     for regime in ("per_doc", "global"):
         figure_regeneration(regen, outdir, regime)
 

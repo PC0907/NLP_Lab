@@ -74,7 +74,9 @@ def _load_by_path(name: str, rel: str):
 
 s7 = _load_by_path("stage07", "scripts/07_reasoning_attribution_lodo.py")
 
-DEFAULT_BUDGETS = [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.00]
+# Includes 0.0 so the risk-coverage curve spans the full coverage range and AURC
+# is integrated over [0, 1] rather than [0, 0.95].
+DEFAULT_BUDGETS = [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.00]
 
 # np.trapz was removed in NumPy 2.0; the cluster venv and this laptop are on
 # different sides of that line.

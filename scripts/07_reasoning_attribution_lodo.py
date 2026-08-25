@@ -13,11 +13,17 @@ Two signals per field (see probe_extraction.extraction.reasoning_attribution):
                hallucination red-flag -- a cheap, human-readable trust signal.
 
 Variants compared under leave-one-document-out (LODO):
-  - answer         : answer-token activation only (baseline / partner branch).
-  - fused_attr     : answer + field-localized reasoning vector.
-  - fused_scalars  : answer + interpretable mention scalars.
-  - fused_both     : answer + reasoning vector + scalars.
-  - scalars_only   : the mention scalars ALONE (interpretable baseline).
+  - answer           : answer-token activation only (baseline / partner branch).
+  - fused_attr       : answer + field-localized reasoning vector.
+  - fused_decomposed : answer + the reasoning vector SPLIT into its document-mean
+                       and field-residual blocks. Same span as fused_attr, but
+                       the probe weights and regularizes the two components
+                       independently rather than letting the large shared
+                       direction swamp the small residual. Strongest variant on
+                       the 974-doc corpus (+0.0364 over answer, p=1.7e-05).
+  - fused_scalars    : answer + interpretable mention scalars.
+  - fused_both       : answer + reasoning vector + scalars.
+  - scalars_only     : the mention scalars ALONE (interpretable baseline).
 
 For every variant we report per_doc_auroc (within-doc detection) and pooled_oof
 (global ranking), plus a PAIRED Wilcoxon significance test vs `answer` on the
@@ -57,7 +63,8 @@ _spec = importlib.util.spec_from_file_location("reasoning_attribution", _RA_PATH
 ra = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ra)
 
-VARIANTS = ("answer", "fused_attr", "fused_scalars", "fused_both", "scalars_only")
+VARIANTS = ("answer", "fused_attr", "fused_decomposed", "fused_scalars",
+            "fused_both", "scalars_only")
 _MAX_ITER = 200
 
 
@@ -66,6 +73,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", required=True)
     p.add_argument("--layers", type=int, nargs="*", default=None)
     p.add_argument("--jobs", type=int, default=-1)
+    p.add_argument("--variants", type=str, nargs="*", default=None,
+                   choices=list(VARIANTS),
+                   help="Subset of variants to run (default: all). `answer` is "
+                        "always included -- every delta is measured from it.")
     p.add_argument("--out-name", type=str, default="reasoning_attribution_lodo.json")
     return p.parse_args()
 
@@ -290,9 +301,14 @@ def main() -> int:
                 "trace: %.1f%% of fields.", len(docs), n_fields, n_err,
                 100 * n_err / max(n_fields, 1), 100 * float(mentioned.mean()))
 
-    results = {v: {} for v in VARIANTS}
+    variants = tuple(args.variants) if args.variants else VARIANTS
+    if "answer" not in variants:
+        variants = ("answer",) + variants
+    logger.info("Variants: %s", list(variants))
+
+    results = {v: {} for v in variants}
     for L in layers:
-        for v in VARIANTS:
+        for v in variants:
             logger.info("LODO: layer %d, variant %s ...", L, v)
             results[v][str(L)] = lodo_eval(docs, L, v, C=cfg.probe.C, n_jobs=args.jobs)
 
@@ -307,7 +323,7 @@ def main() -> int:
         logger.info("=" * 70)
         logger.info("ATTRIBUTION LODO metric: %s (best layer per variant)", metric)
         summary[metric] = {}
-        for v in VARIANTS:
+        for v in variants:
             bl = best_layer(v, metric)
             ba = results[v][str(bl)][metric] if bl is not None else None
             summary[metric][v] = {"best_layer": bl, "best_auroc": ba}
@@ -321,7 +337,7 @@ def main() -> int:
         ans_pd = results["answer"][str(ans_layer)]["_per_doc"]
         logger.info("=" * 70)
         logger.info("PAIRED SIGNIFICANCE vs answer (per-doc AUROC, layer %d):", ans_layer)
-        for v in VARIANTS:
+        for v in variants:
             if v == "answer":
                 continue
             # Compare at the SAME layer as answer for a fair paired test.
@@ -333,7 +349,7 @@ def main() -> int:
                         f"{p:.4g}" if p is not None else "n/a", n)
 
     # Strip bulky per-doc lists before saving.
-    for v in VARIANTS:
+    for v in variants:
         for L in results[v]:
             results[v][L].pop("_per_doc", None)
 

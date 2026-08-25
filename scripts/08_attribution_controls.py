@@ -529,6 +529,9 @@ def main() -> int:
             "decomposed_vs_answer": ("answer", "fused_decomposed"),
             "decomposed_vs_docmean": ("ctrl_docmean", "fused_decomposed"),
             "decomposed_vs_pad": ("ctrl_docmean_pad", "fused_decomposed"),
+            # Where the width-matched control sits relative to the baseline, so
+            # it can be plotted alongside the others in F3.
+            "docmean_pad_vs_answer": ("answer", "ctrl_docmean_pad"),
         }
         comparisons = {k: v for k, v in comparisons.items()
                        if v[0] in variants and v[1] in variants}
