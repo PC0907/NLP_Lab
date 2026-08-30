@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=A40short
+#SBATCH --partition=A100short
 #SBATCH --time=8:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
@@ -8,12 +8,13 @@
 #SBATCH --job-name=gemma4b_s1
 #SBATCH --output=logs/gemma4b_s1_%j.out
 #SBATCH --error=logs/gemma4b_s1_%j.err
+#SBATCH --export=NONE
 # STAGE 1: Gemma-3-4B extraction + labeling only. Stops before the probe stage
 # so the error rate and document yield can be checked first.
 # A40 (44GB) should suffice: 4B at bf16 is ~8GB of weights. If the longest
 # credit agreements still OOM, move to A100short (and add the --export=NONE /
-# unset SLURM_EXPORT_ENV / setup_env_a100.sh trio).
-source ~/NLP_Lab/setup_env.sh
+unset SLURM_EXPORT_ENV
+source ~/NLP_Lab/setup_env_a100.sh
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
 export MKL_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
