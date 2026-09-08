@@ -86,6 +86,22 @@ def train_probe(
 ) -> LinearProbe:
     """Train a linear probe with cross-validated AUROC reporting.
 
+    !! THE AUROC REPORTED HERE IS OPTIMISTIC -- DO NOT QUOTE IT AS A HEADLINE. !!
+
+    The folds below are stratified over FIELDS, not grouped by document, so
+    fields belonging to the same document land in both the training and the
+    validation half. A probe can then exploit document-specific quirks it has
+    already seen, which inflates the score. The same applies to the single
+    train/test split further down.
+
+    That is exactly why the project's reported numbers come from
+    leave-one-document-out instead (scripts/07_reasoning_attribution_lodo.py and
+    scripts/09_selective_regeneration_sob.py), where an entire document is held
+    out and per-fold standardization is fitted on the training rows only. Use
+    this function's output to see WHERE in the network the signal lives -- the
+    shape of the per-layer curve -- and never to compare against the log-prob
+    baselines, which involve no training and so cannot leak.
+
     Strategy:
       1. Run K-fold CV on the entire dataset to get robust AUROC estimates.
       2. Hold out a final test split, train on the rest, report metrics.

@@ -18,6 +18,16 @@ The probe itself is a means, not the end. The headline result is a Pareto
 curve comparing probe-guided selective regeneration against baselines on
 extraction accuracy vs. compute cost.
 
+## Tracks
+
+The project runs on two parallel tracks that share this pipeline:
+
+- **`main`** — Qwen3.5 on ExtractBench (document extraction).
+- **`adnan-dev`** — DeepSeek-R1 on SOB, asking whether a *reasoning model's*
+  chain of thought carries error information beyond the answer token.
+  Start at **[`docs/REASONING_TRACK.md`](docs/REASONING_TRACK.md)** for that
+  track's results, pipeline and reproduction steps.
+
 ## Approach
 
 1. Run an open-weights LLM on extraction benchmark documents.
