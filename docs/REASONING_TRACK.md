@@ -40,6 +40,30 @@ it is never used as a headline.
 
 ---
 
+## Repository layout — what belongs to this track
+
+The repository is shared between both tracks, so the root holds run scripts for
+each. These are the ones for the reasoning-trace work; everything else at the
+root belongs to the partner track (`run_analysis_*.sh`, `run_extraction_*.sh`,
+`run_deepseek_*.sh`) or is generic setup.
+
+| Path | Contents |
+|---|---|
+| `src/probe_extraction/` | The library: config, data loaders, extraction, labeling, probes, baselines |
+| `scripts/` | Numbered pipeline stages, run in order |
+| `configs/exp_deepseek_r1_7b_sob*.yaml` | This track's experiment configs |
+| `tests/` | 177 tests, CPU-only |
+| `docs/` | Weekly updates 01–08, this file, paper skeleton, briefing |
+| `run_sob_1k_*.sh` | **The current run scripts** — the 994-document pipeline |
+| `run_sob_attr_*.sh`, `run_sob_*_a100.sh` | Earlier 300-document runs, kept for reproducibility |
+| `figures/` | Generated figures (PDF + PNG + CSV of plotted values) |
+| `artifacts/`, `data/`, `logs/` | Gitignored — large and regenerable |
+
+If you only want to reproduce the final results, you need the five
+`run_sob_1k_*.sh` scripts and nothing else at the root.
+
+---
+
 ## Pipeline
 
 | Stage | Script | Runs on | What it does |
