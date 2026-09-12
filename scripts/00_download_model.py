@@ -1,16 +1,18 @@
-"""Download DeepSeek-R1-Distill-Qwen-7B to the HuggingFace cache.
+"""Cache a model locally for the Bender compute nodes.
 
 Run this ONCE on the Bender LOGIN NODE before submitting the extraction job.
 Compute nodes do not have internet access, so the model must be cached first.
 
 Usage:
-    python scripts/00_download_model.py
+    python scripts/00_download_model.py                    # default model
+    python scripts/00_download_model.py Qwen/Qwen3.5-9B    # any other model
 
-The model (~14 GB) will be saved to:
-    ~/.cache/huggingface/hub/models--deepseek-ai--DeepSeek-R1-Distill-Qwen-7B/
+The weights are saved under:
+    ~/.cache/huggingface/hub/models--<org>--<name>/
 
 Time estimate: 10-30 minutes depending on network speed.
-Disk space needed: ~14 GB free in your home directory or wherever
+Disk space needed: roughly 2 GB per billion parameters in bf16
+(~14 GB for a 7B, ~18 GB for a 9B) free in your home directory or wherever
     HF_HOME / TRANSFORMERS_CACHE points to.
 
 If you are low on quota in ~/ you can redirect the cache:
@@ -25,12 +27,16 @@ from __future__ import annotations
 import sys
 import time
 
-MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+DEFAULT_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 
 
 def main() -> int:
-    print(f"Downloading: {MODEL_NAME}")
-    print("This will take 10-30 minutes (~14 GB).")
+    # Takes the model id as an argument so any model can be cached with this
+    # helper, not just the first one the project used:
+    #   python scripts/00_download_model.py Qwen/Qwen3.5-9B
+    model_name = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
+    print(f"Downloading: {model_name}")
+    print("Expect 10-40 minutes depending on size and network.")
     print("=" * 60)
 
     try:
@@ -46,7 +52,7 @@ def main() -> int:
     t0 = time.time()
     try:
         tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_NAME,
+            model_name,
             trust_remote_code=False,
         )
         print(f"  Tokenizer downloaded in {time.time() - t0:.1f}s")
@@ -56,12 +62,12 @@ def main() -> int:
         return 1
 
     # Download model weights (the slow part)
-    print("\n[2/2] Downloading model weights (~14 GB)...")
+    print("\n[2/2] Downloading model weights...")
     print("  Progress is shown by HuggingFace below.")
     t0 = time.time()
     try:
         model = AutoModelForCausalLM.from_pretrained(
-            MODEL_NAME,
+            model_name,
             trust_remote_code=False,
             # Do NOT load to GPU here — we only want to cache the weights.
             # The extraction job will load to GPU with dtype=bfloat16.

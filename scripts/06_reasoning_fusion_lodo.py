@@ -14,7 +14,7 @@ The question: does an explicit reasoning-trace representation add error-relevant
 signal beyond what is already linearly accessible at the answer token? A
 positive, LODO-robust gap is the paper's central claim.
 
-This REPLACES the dropped CLAP stage (06_train_clap.py / 07_lodo_clap.py): same
+This replaced an earlier cross-layer probe attempt that was removed: same
 goal (use the reasoning model's internals better) with a lightweight, stable
 late-fusion logistic-regression probe instead of an unstable cross-layer
 transformer.

@@ -1,0 +1,98 @@
+# Qwen3.5 (~7-8B) WITH THINKING ENABLED, on SOB -- the second reasoning model.
+#
+# Purpose: generality. Every result so far rests on DeepSeek-R1-Distill-Qwen-7B,
+# and "one model, one dataset" is the first thing a reviewer will object to.
+# This replicates the whole pipeline on a different model family.
+#
+# ############################################################################
+# BEFORE RUNNING -- two values below are placeholders and MUST be set:
+#
+#   1. model.name       The exact Hugging Face id has NOT been guessed here.
+#                       Find the real one first (see docs/REASONING_TRACK.md),
+#                       or pass it to the smoke test with --model-override.
+#
+#   2. activations.layers   Layer indices are architecture-specific and cannot
+#                       be copied between model families. The list below is
+#                       DeepSeek-R1-7B's (28 layers) as a starting point. Run
+#                       scripts/00_smoke_reasoning_model.py first: it prints the
+#                       model's real layer count and a suggested list.
+#
+# Run the smoke test until it exits 0 before starting the full extraction.
+# ############################################################################
+
+experiment:
+  name: "qwen35_reasoning_sob"
+  seed: 42
+  artifacts_dir: "artifacts"
+
+model:
+  name: "PLACEHOLDER-SET-ME"          # <-- 1. real Qwen3.5 7-8B id
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: false
+  max_new_tokens: 4096
+  temperature: 0.0
+  top_p: 1.0
+  # THE critical flag for this experiment. Qwen3.x suppresses the
+  # <think>...</think> block unless the chat template is asked for it, and the
+  # pipeline detects the trace by that literal marker. False here means no
+  # trace, no attribution, and a silent null in Stage 7.
+  enable_thinking: true
+
+activations:
+  layers: [1, 4, 7, 10, 12, 14, 16, 18, 19, 21, 23, 24, 26, 28]   # <-- 2. verify
+  position: "last_token"
+  dtype: "float16"
+
+data:
+  benchmark: "sob"
+  benchmark_path: "data/sob"
+  split: "test"
+  domains: []
+  # 3,000 documents: ~1,500 development + ~1,500 held-out. The split is applied
+  # at analysis time by probe_extraction.utils.splits, not here, so extraction
+  # happens once and both halves come from the same run.
+  max_documents: 3000
+  pdf_extractor: "pymupdf"
+
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  max_input_chars: 0
+
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+  match_mode: "structure_aware"
+
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"

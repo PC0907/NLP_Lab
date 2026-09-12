@@ -343,7 +343,11 @@ def main() -> int:
         device_map=cfg.model.device_map,
         trust_remote_code=cfg.model.trust_remote_code,
         hf_token=hf_token,
+        enable_thinking=cfg.model.enable_thinking,
     )
+    if cfg.model.enable_thinking:
+        logger.info("Chat template requested WITH thinking enabled "
+                    "(reasoning-trace capture requires it on hybrid models).")
 
     # ------ Reasoning-token capture (for offline field-localized attribution) --
     # Persist per-token reasoning states for a small layer subset. Controlled by

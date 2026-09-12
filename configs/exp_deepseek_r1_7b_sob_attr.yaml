@@ -60,17 +60,6 @@ probe:
   test_size: 0.2
   cv_folds: 5
 
-clap:
-  d_model: 128
-  n_enc: 1
-  dropout: 0.1
-  lr: 5.0e-4
-  epochs: 50
-  batch_size: 64
-  weight_decay: 1.0e-2
-  warmup_epochs: 5
-  patience: 10
-
 baselines:
   enabled:
     - "token_logprob"

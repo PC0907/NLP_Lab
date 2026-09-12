@@ -105,8 +105,11 @@ class HuggingFaceLLM(LLM):
         device_map: str | dict[str, Any] = "auto",
         trust_remote_code: bool = False,
         hf_token: str | None = None,
+        enable_thinking: bool = False,
     ) -> None:
         self._model_name = model_name
+        # Requested of the chat template; see format_chat().
+        self._enable_thinking = enable_thinking
 
         torch_dtype = self._resolve_dtype(dtype)
         quant_config = self._build_quant_config(quantization, torch_dtype)
@@ -217,16 +220,18 @@ class HuggingFaceLLM(LLM):
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": user_message})
 
-        # apply_chat_template accepts model-specific kwargs; for Qwen3.5
-        # `enable_thinking=False` disables the <think>...</think> mode and
-        # produces a direct response. Older models (Qwen2.5, Llama) ignore
-        # unknown kwargs, so this is safe to pass unconditionally.
+        # Hybrid-thinking models (the Qwen3.x family) read `enable_thinking`
+        # from the chat template: False suppresses the <think>...</think> block,
+        # True requests it. Set it from config -- a reasoning-trace experiment on
+        # such a model needs True, or there is no trace to attribute. Models that
+        # always reason (DeepSeek-R1 distills) and older ones ignore the kwarg,
+        # so passing it is harmless for them.
         try:
             return self.tokenizer.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
-                enable_thinking=False,
+                enable_thinking=self._enable_thinking,
             )
         except TypeError:
             # Some older tokenizers raise on unknown kwargs. Fall back.

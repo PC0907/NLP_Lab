@@ -18,7 +18,6 @@
 #   sbatch run_deepseek_analysis.sh
 #
 # After this completes, run:
-#   sbatch run_clap.sh
 # ─────────────────────────────────────────────────────────────────────────────
 
 source ~/NLP_Lab/setup_env.sh
