@@ -17,13 +17,19 @@
 #   --resume  skips documents already extracted WITH per-token reasoning states,
 #             so the ~300 from the first attribution run cost nothing, and a
 #             time-limit kill loses only the document in flight. Just resubmit.
-#   --shard   optional: run this script several times with SHARD=1/3, 2/3, 3/3
-#             to split the corpus across concurrent GPU jobs (disjoint files).
+#   --shard   optional: run this script several times with 1/3, 2/3, 3/3 to
+#             split the corpus across concurrent GPU jobs (disjoint files).
 #
 # Usage:
 #   sbatch run_sob_1k_extract_a100.sh              # one job, resume-safe
-#   SHARD=1/3 sbatch run_sob_1k_extract_a100.sh    # or three concurrent jobs
+#   sbatch run_sob_1k_extract_a100.sh 1/3          # or three concurrent jobs
+#   sbatch run_sob_1k_extract_a100.sh 2/3
+#   sbatch run_sob_1k_extract_a100.sh 3/3
 #   (resubmit the same command after a time-limit kill; it picks up where it left off)
+#
+# The shard is a POSITIONAL argument. An environment variable would not survive
+# #SBATCH --export=NONE, which strips the environment -- the value would silently
+# never reach the job, and three "shards" would all process the whole corpus.
 
 module load Python/3.12.3
 module load CUDA/12.4.0
@@ -44,7 +50,7 @@ cd ~/NLP_Lab
 CFG="configs/exp_deepseek_r1_7b_sob_attr_1k.yaml"
 ART="artifacts/deepseek_r1_7b_sob_attr"
 SHARD_ARG=""
-if [ -n "${SHARD:-}" ]; then SHARD_ARG="--shard ${SHARD}"; fi
+if [ -n "${1:-}" ]; then SHARD_ARG="--shard ${1}"; fi
 
 echo "=== ENVIRONMENT ==="
 hostname; nvidia-smi || true

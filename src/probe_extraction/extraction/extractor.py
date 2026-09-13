@@ -125,6 +125,45 @@ class ExtractionResult:
 
 
 # ============================================================================
+# Prompt construction (shared)
+# ============================================================================
+
+def truncate_document_text(text: str, max_input_chars: int) -> str:
+    """Truncate document text. max_input_chars <= 0 disables truncation."""
+    if max_input_chars <= 0 or len(text) <= max_input_chars:
+        return text
+    truncated = text[:max_input_chars]
+    logger.info(
+        "Truncated document text from %d to %d chars (~%d tokens)",
+        len(text), len(truncated), len(truncated) // 4,
+    )
+    return truncated
+
+
+def build_prompt_for_document(
+    llm: LLM,
+    doc: Document,
+    *,
+    include_schema: bool,
+    max_input_chars: int,
+) -> str:
+    """The exact prompt string the model is given for one document.
+
+    Extraction and regeneration MUST send the model the same prompt, or a
+    measured "repair rate" would be confounded by a prompt difference rather
+    than reflecting a second attempt at the same task. Both paths call this, so
+    the two cannot drift apart.
+    """
+    document_text = truncate_document_text(doc.text, max_input_chars)
+    system_msg, user_msg = build_extraction_prompt(
+        schema=doc.schema,
+        document_text=document_text,
+        include_schema=include_schema,
+    )
+    return llm.format_chat(system_msg, user_msg)
+
+
+# ============================================================================
 # Extractor
 # ============================================================================
 
@@ -206,15 +245,9 @@ class Extractor:
     #Only necessary because of CUDA OOM Error. Can comment this out, with more computation
     def _truncate_document_text(self, text: str) -> str:
         """Truncate document text. Set max_input_chars=0 in config to disable."""
-        if self.max_input_chars <= 0 or len(text) <= self.max_input_chars:
-            return text
-        truncated = text[: self.max_input_chars]
-        logger.info(
-            "Truncated document text from %d to %d chars (~%d tokens)",
-            len(text), len(truncated), len(truncated) // 4,
-        )
-        return truncated
-    
+        return truncate_document_text(text, self.max_input_chars)
+
+
     def extract(self, doc: Document) -> ExtractionResult:
         """Run extraction on a single document.
 
@@ -243,16 +276,12 @@ class Extractor:
                 captured_layers=list(self.layers),
             )
 
-        # ------ Truncate document text if needed ------
-        document_text = self._truncate_document_text(doc.text)
-
-        # ------ Build prompt ------
-        system_msg, user_msg = build_extraction_prompt(
-            schema=doc.schema,
-            document_text=document_text,
+        # ------ Build prompt (shared with regeneration; see the helper) ------
+        prompt = build_prompt_for_document(
+            self.llm, doc,
             include_schema=self.include_schema,
+            max_input_chars=self.max_input_chars,
         )
-        prompt = self.llm.format_chat(system_msg, user_msg)
 
         # ------ Run model ------
         logger.info("Extracting %s (text=%d chars)", doc.doc_id, len(doc.text))

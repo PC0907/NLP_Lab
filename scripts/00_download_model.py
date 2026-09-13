@@ -5,14 +5,14 @@ Compute nodes do not have internet access, so the model must be cached first.
 
 Usage:
     python scripts/00_download_model.py                    # default model
-    python scripts/00_download_model.py Qwen/Qwen3.5-9B    # any other model
+    python scripts/00_download_model.py <org>/<model>      # any other model
 
 The weights are saved under:
     ~/.cache/huggingface/hub/models--<org>--<name>/
 
 Time estimate: 10-30 minutes depending on network speed.
 Disk space needed: roughly 2 GB per billion parameters in bf16
-(~14 GB for a 7B, ~18 GB for a 9B) free in your home directory or wherever
+(~14 GB for a 7B) free in your home directory or wherever
     HF_HOME / TRANSFORMERS_CACHE points to.
 
 If you are low on quota in ~/ you can redirect the cache:
@@ -33,7 +33,7 @@ DEFAULT_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 def main() -> int:
     # Takes the model id as an argument so any model can be cached with this
     # helper, not just the first one the project used:
-    #   python scripts/00_download_model.py Qwen/Qwen3.5-9B
+    #   python scripts/00_download_model.py <org>/<model>
     model_name = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
     print(f"Downloading: {model_name}")
     print("Expect 10-40 minutes depending on size and network.")

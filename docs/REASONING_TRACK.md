@@ -49,10 +49,10 @@ root belongs to the partner track (`run_analysis_*.sh`, `run_extraction_*.sh`,
 
 | Path | Contents |
 |---|---|
-| `src/probe_extraction/` | The library: config, data loaders, extraction, labeling, probes, baselines |
+| `src/probe_extraction/` | The library: config, data loaders, extraction, labeling, probes, baselines, regeneration measurement |
 | `scripts/` | Numbered pipeline stages, run in order |
 | `configs/exp_deepseek_r1_7b_sob*.yaml` | This track's experiment configs |
-| `tests/` | 177 tests, CPU-only |
+| `tests/` | 267 tests, CPU-only (251 without the PyMuPDF-dependent file) |
 | `docs/` | Weekly updates 01–08, this file, paper skeleton, briefing |
 | `run_sob_1k_*.sh` | **The current run scripts** — the 994-document pipeline |
 | `run_sob_attr_*.sh`, `run_sob_*_a100.sh` | Earlier 300-document runs, kept for reproducibility |
@@ -74,11 +74,48 @@ If you only want to reproduce the final results, you need the five
 | 4 | `scripts/04_evaluate.py` | CPU | Probe vs token-log-prob baselines. |
 | 7 | `scripts/07_reasoning_attribution_lodo.py` | CPU | The reasoning experiment: LODO over feature variants + paired significance. |
 | 8 | `scripts/08_attribution_controls.py` | CPU | Controls, Holm correction, bootstrap CIs, geometry diagnostic, mention analysis. |
-| 9 | `scripts/09_selective_regeneration_sob.py` | CPU | Risk–coverage and cost–quality curves. |
+| 9 | `scripts/09_selective_regeneration_sob.py` | CPU | Risk–coverage and cost–quality curves (**simulated** repair). Also writes `results/oof_field_scores.json`, the per-field out-of-fold scores Stage 12 ranks by. |
 | 10 | `scripts/10_make_figures.py` | CPU | Figures F2/F3/F4 as PDF + PNG + CSV of plotted values. |
+| 11 | `scripts/11_regenerate.py` | GPU | **Real** regeneration: re-asks the model *k* times per document at temperature > 0 and saves what it said. No selection and no comparison happen here, so one pass serves every budget. |
+| 12 | `scripts/12_regen_evaluate.py` | CPU | Swaps the regenerated values into the flagged fields, re-labels against gold with Stage 2's matcher, and counts repaired / damaged / unchanged / unavailable. |
 
 Stages 5 and 6 (`05_lodo_cv.py`, `06_reasoning_fusion_lodo.py`) are earlier
 versions, superseded by Stage 7 — see "Superseded" below.
+
+### Stages 11–12: measured, not assumed
+
+Stage 9 priced selective regeneration under two invented numbers — a re-asked
+wrong field is repaired with probability 0.7, a re-asked right field is broken
+with probability 0.05. Stages 11 and 12 replace them with measurement, and
+report the real rates.
+
+What is worth knowing about the design:
+
+* **Temperature must be > 0.** Greedy decoding is deterministic, so a re-run
+  would reproduce the original extraction token for token and could never
+  repair anything. Stage 11 exits rather than run at temperature 0.
+* **The prompt is identical** to extraction — both go through
+  `extraction.build_prompt_for_document`. Otherwise a measured repair rate
+  would partly reflect a prompt change.
+* **Truncated resamples are excluded.** A generation that hit `max_new_tokens`
+  only has JSON because the parser repaired it; it is not something the model
+  committed to.
+* **Each swap is measured alone**, and its `net_delta` is the change in the
+  document's error count over the whole scored field set — so a swap is charged
+  for collateral damage to its neighbours. Any budget is then the sum of the
+  net deltas of the fields it flags. That additivity is checked, not assumed:
+  `--checkpoint-budgets` re-does selected budgets jointly and reports the drift.
+* **Two strategies**, both free from one Stage 11 run: `first` (one resample —
+  the honest k=1 deployment cost) and `vote` (majority across resamples).
+* **Two guards that refuse rather than warn.** Stage 12 stops if any scored
+  document lacks a regeneration (a partial run would silently report a number
+  computed on a subset), and if re-labeling the *original* extractions fails to
+  reproduce the labels Stage 2 stored (before and after would not be
+  like-for-like).
+
+Run them with `run_sob_regenerate_a100.sh` (GPU, shardable) then
+`run_sob_regen_eval.sh` (CPU, runs Stage 9 and Stage 12 together so the scores
+cannot drift between them).
 
 ### Feature variants compared in Stage 7
 
@@ -116,12 +153,20 @@ sbatch run_sob_1k_stage07_fix_a100.sh    # fused_decomposed + merged results tab
 python scripts/10_make_figures.py --config configs/exp_deepseek_r1_7b_sob_attr_1k.yaml
 ```
 
+Then the real regeneration measurement (Stages 11–12):
+
+```bash
+sbatch run_sob_regenerate_a100.sh 1/2    # GPU, ~13h total, so split in two
+sbatch run_sob_regenerate_a100.sh 2/2
+sbatch run_sob_regen_eval.sh             # CPU: Stage 9 rescore + Stage 12 measurement
+```
+
 Config: `configs/exp_deepseek_r1_7b_sob_attr_1k.yaml`.
 Per-token reasoning capture is enabled by env vars set inside the extract
 script (`REASONING_TOKEN_LAYERS`, `REASONING_TOKEN_CAP`); without them Stage 7
 has nothing to attribute and will refuse to run.
 
-Tests (177, no GPU needed):
+Tests (251 with the command below, no GPU needed):
 
 ```bash
 PYTHONPATH=$PWD/src python -m pytest tests/ -q --ignore=tests/test_extract_bench.py
@@ -142,7 +187,9 @@ Under `artifacts/deepseek_r1_7b_sob_attr/`:
 | `results/decomposition_test.json` | Controls, geometry, mention analysis |
 | `results/selection_test.json` | Whole-trace vs value-mention token selection |
 | `results/attribution_controls.json` | Shuffled / random controls |
-| `results/selective_regeneration_final.json` | Cost–quality curves |
+| `results/selective_regeneration_final.json` | Cost–quality curves (simulated repair) |
+| `results/oof_field_scores.json` | Per-field out-of-fold scores for every signal — the ranking Stage 12 spends its budget by |
+| `results/regen_evaluation.json` | **Measured** repair/damage rates and the real post-regeneration error rate |
 | `probes/_summary.json`, `results/comparison.json` | Per-layer CV and baselines |
 | `labels/_definition_comparison.json` | Error rate under all three matchers |
 

@@ -267,6 +267,7 @@ def main() -> int:
     rng = np.random.default_rng(args.seed)
     y_parts, doc_parts, sig_parts = [], [], {k: [] for k in oof}
     lpm_parts, lpn_parts = [], []
+    keys: list[tuple[str, str]] = []   # (doc_id, path_str) per surviving row
     n_drop = 0
     for i, d in enumerate(docs):
         if any(oof[k][i] is None for k in oof):
@@ -282,6 +283,7 @@ def main() -> int:
             sig_parts[k].append(oof[k][i][ok])
         lpm_parts.append(lp_mean[i][ok])
         lpn_parts.append(lp_min[i][ok])
+        keys.extend((d["doc_id"], d["path_strs"][j]) for j in np.flatnonzero(ok))
 
     y = np.concatenate(y_parts)
     doc_ids = np.concatenate(doc_parts)
@@ -295,6 +297,28 @@ def main() -> int:
     logger.info("Evaluation set: %d fields in %d docs, %d errors (%.1f%%). "
                 "Dropped %d fields lacking a signal.",
                 len(y), n_docs_eval, int(y.sum()), 100 * y.mean(), n_drop)
+
+    # Persist the out-of-fold scores, field by field, so Stage 12 can rank the
+    # SAME fields by the SAME numbers without re-running the LODO sweep (and
+    # without needing the activations on disk). If the two stages recomputed
+    # the scores independently they could drift apart, and the simulated curve
+    # here would stop being comparable to the measured one there.
+    assert len(keys) == len(y), "score dump misaligned with the evaluation set"
+    dump_signals = ["probe_answer", "probe_fused", "mean_logprob", "min_logprob"]
+    scores_path = results_dir / "oof_field_scores.json"
+    scores_path.write_text(json.dumps({
+        "layer": L,
+        "fused_variant": args.fused_variant,
+        "signals": dump_signals,
+        "n_fields": int(len(y)),
+        "n_docs": int(n_docs_eval),
+        "fields": [
+            {"doc_id": doc_id, "path_str": ps, "y": int(y[i]),
+             "scores": {k: float(signals[k][i]) for k in dump_signals}}
+            for i, (doc_id, ps) in enumerate(keys)
+        ],
+    }, indent=2))
+    logger.info("Per-field OOF scores -> %s (Stage 12 reads this)", scores_path)
 
     aurocs = {k: (float(roc_auc_score(y, v)) if y.sum() not in (0, len(y)) else None)
               for k, v in signals.items()}
