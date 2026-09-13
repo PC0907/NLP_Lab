@@ -120,41 +120,58 @@ def parse_camelot(pdf_path: Path) -> str:
     return "\n".join(chunks)
 
 
-def parse_mineru(pdf_path: Path) -> str:
-    """MinerU. The API has changed across versions, so try the documented
-    entry points in turn and report clearly if none match."""
-    try:
-        from magic_pdf.data.read_api import read_local_office  # noqa: F401
-    except Exception:
-        pass
-    # v1-style pipeline
-    try:
-        from magic_pdf.pipe.UNIPipe import UNIPipe
-        from magic_pdf.rw.DiskReaderWriter import DiskReaderWriter
-        image_writer = DiskReaderWriter("/tmp/mineru_images")
-        pipe = UNIPipe(pdf_path.read_bytes(), {"_pdf_type": "", "model_list": []},
-                       image_writer)
-        pipe.pipe_classify()
-        pipe.pipe_analyze()
-        pipe.pipe_parse()
-        return pipe.pipe_mk_markdown(str(pdf_path.parent), drop_mode="none")
-    except Exception as e1:
-        # v2-style CLI-backed API
-        try:
-            from mineru.cli.common import do_parse  # type: ignore
-            out_dir = Path("/tmp/mineru_out")
-            out_dir.mkdir(parents=True, exist_ok=True)
-            do_parse(str(out_dir), [pdf_path.stem], [pdf_path.read_bytes()], ["en"])
-            md = next(out_dir.rglob("*.md"), None)
-            if md is None:
-                raise RuntimeError("no markdown produced")
-            return md.read_text()
-        except Exception as e2:
-            raise RuntimeError(
-                f"MinerU API not matched. v1: {e1!r}; v2: {e2!r}. "
-                "Check the installed version's entry point and adjust parse_mineru()."
-            )
+# ---------------------------------------------------------------------------
+# REPLACEMENT for parse_mineru() in parse_corpus.py
+#
+# Signature confirmed against MinerU 3.4.5:
+#   do_parse(output_dir, pdf_file_names, pdf_bytes_list, p_lang_list,
+#            backend='pipeline', parse_method='auto', formula_enable=True,
+#            table_enable=True, ..., f_dump_md=True, ...)
+#
+# Notes:
+#  - backend already defaults to 'pipeline', so no GPU-backend juggling needed.
+#  - The bbox-drawing and JSON dumps are turned OFF: they write large files we
+#    do not read, and each call would otherwise leave several artefacts behind.
+#  - Output goes to a PER-DOCUMENT temp directory. do_parse writes a tree whose
+#    exact shape varies by version, so searching a shared directory would pick
+#    up the previous document's markdown. A fresh directory per call makes the
+#    rglob unambiguous.
+# ---------------------------------------------------------------------------
 
+def parse_mineru(pdf_path: Path) -> str:
+    import shutil
+    import tempfile
+    from mineru.cli.common import do_parse
+
+    out_dir = Path(tempfile.mkdtemp(prefix="mineru_"))
+    try:
+        do_parse(
+            str(out_dir),
+            [pdf_path.stem],
+            [pdf_path.read_bytes()],
+            ["en"],
+            backend="pipeline",
+            parse_method="auto",
+            formula_enable=False,      # no formulas in these documents
+            table_enable=True,         # the whole point
+            f_draw_layout_bbox=False,  # debug images we do not read
+            f_draw_span_bbox=False,
+            f_dump_middle_json=False,
+            f_dump_model_output=False,
+            f_dump_orig_pdf=False,
+            f_dump_content_list=False,
+            f_dump_md=True,            # the only output we want
+        )
+        mds = sorted(out_dir.rglob("*.md"))
+        if not mds:
+            tree = [str(p.relative_to(out_dir)) for p in out_dir.rglob("*")][:20]
+            raise RuntimeError(f"no markdown produced; output tree: {tree}")
+        # Prefer a file whose stem matches the document, else take the largest.
+        match = [m for m in mds if pdf_path.stem in m.stem]
+        chosen = match[0] if match else max(mds, key=lambda p: p.stat().st_size)
+        return chosen.read_text(encoding="utf-8", errors="replace")
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
 
 PARSERS = {
     "pymupdf": parse_pymupdf,
