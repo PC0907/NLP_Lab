@@ -61,7 +61,7 @@ class DataConfig(BaseModel):
     benchmark_path: str
     domains: list[str] = Field(default_factory=list)
     max_documents: int | None = None
-    pdf_extractor: Literal["pymupdf", "docling"] = "pymupdf"
+    pdf_extractor: Literal["pymupdf", "docling", "camelot"] = "pymupdf"
 
 
 class ExtractionConfig(BaseModel):
