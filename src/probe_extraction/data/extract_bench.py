@@ -334,6 +334,7 @@ class ExtractBench(Benchmark):
                 pdf_path,
                 min_chars=self.pdf_min_chars,
                 backend=self.pdf_backend,
+                cache_key=doc_id,
             )        
         except (PDFExtractionError, FileNotFoundError) as e:
             extraction_error = str(e)
