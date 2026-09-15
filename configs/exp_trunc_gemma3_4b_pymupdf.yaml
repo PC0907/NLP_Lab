@@ -1,0 +1,70 @@
+experiment:
+  name: "trunc_gemma3_4b_pymupdf"
+seed: 42
+artifacts_dir: "artifacts"
+model:
+  # 34 layers, hidden 2560. Matched to Qwen on width and parameter count.
+  name: "google/gemma-3-4b-it"
+  dtype: "bfloat16"
+  quantization: "none"
+  device_map: "auto"
+  trust_remote_code: true
+  max_new_tokens: 8192
+  temperature: 0.0
+  top_p: 1.0
+activations:
+  layers: [2, 4, 8, 12, 14, 16, 18, 20, 22, 24, 28, 32]
+  position: "last_token"
+  dtype: "float16"
+data:
+  benchmark: "extract_bench"
+  benchmark_path: "data/extract-bench"
+  domains:
+    - "academic/research"
+    - "finance/credit_agreement"
+    - "finance/10kq"
+    - "sport/swimming"
+  max_documents: null
+  pdf_extractor: "pymupdf"
+extraction:
+  prompt_template: "default"
+  include_schema: true
+  include_examples: false
+  # TRUNCATED to 300000 for BOTH models. At 600000 Gemma OOMs on the credit
+  # agreements (attention allocations of 25-34 GiB on 200k-500k char docs),
+  # removing exactly the documents that carry error signal and leaving a
+  # 9-document intersection too small and swimming-heavy for LODO. Halving the
+  # input roughly quarters attention cost. Qwen is run at the SAME limit so
+  # both models see identical text -- the comparison is fair, but it measures
+  # extraction on the first 300k chars, not the whole document. Do NOT compare
+  # these numbers against the full-length Qwen results.
+  max_input_chars: 300000
+labeling:
+  strategy: "strict"
+  string_match: "fuzzy"
+  fuzzy_threshold: 0.85
+  number_tolerance: 0.01
+  url_normalize: true
+  email_normalize: true
+probe:
+  type: "logistic_regression"
+  C: 1.0
+  max_iter: 1000
+  class_weight: "balanced"
+  test_size: 0.2
+  cv_folds: 5
+baselines:
+  enabled:
+    - "token_logprob"
+    - "min_token_logprob"
+  self_consistency_samples: 5
+  self_consistency_temperature: 0.7
+selective_regen:
+  thresholds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  regeneration_strategy: "resample"
+  resample_temperature: 0.7
+  resample_samples: 3
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_dir: "logs"
