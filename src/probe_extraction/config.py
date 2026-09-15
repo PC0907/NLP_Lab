@@ -43,7 +43,7 @@ class ModelConfig(BaseModel):
 
 class ActivationsConfig(BaseModel):
     layers: list[int]
-    position: Literal["last_token", "mean", "all"] = "last_token"
+    position: Literal["last_token", "mean", "all_tokens"] = "last_token"
     dtype: Literal["float16", "float32"] = "float16"
 
     @field_validator("layers")
