@@ -16,7 +16,7 @@ activations:
   # "all" stores every generated token's activation per field, not just the
   # last -- this is what makes the directory ~1.2GB and what the span-max
   # analysis reads. Reproduces the setting of qwen35_4b_pooled_alltokens.
-  position: "all"
+  position: "all_tokens"
   dtype: "float16"
 data:
   benchmark: "extract_bench"
