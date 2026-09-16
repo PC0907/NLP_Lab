@@ -39,6 +39,7 @@ import argparse
 import json
 import pickle
 import random
+import re
 import sys
 import time
 from collections import Counter
@@ -76,6 +77,11 @@ def parse_args():
     p.add_argument("--skip-fixed-sweep", action="store_true",
                    help="Skip the fixed-layer sweep (saves ~25 fits).")
     p.add_argument("--skip-final-probes", action="store_true")
+    p.add_argument("--list-agg", choices=["none", "last", "mean"], default="last",
+                   help="List-valued fields: labels are per list, activations per "
+                        "element (path.0, path.1, ...). 'last' = last token of the last "
+                        "element, 'mean' = mean of each element's last token, "
+                        "'none' = drop list fields (05b behaviour).")
     p.add_argument("--out-name", default="nested_groupkfold.json")
     return p.parse_args()
 
@@ -196,6 +202,67 @@ def aligned_paths(labels_dir: Path, activations_dir: Path, layers):
     return np.array(doc_ids), np.array(paths), np.array(ys)
 
 
+ELEM_RE = re.compile(r"^(.*)\.(\d+)__layer(\d+)$")
+
+
+def load_with_lists(labels_dir: Path, activations_dir: Path, layers, agg):
+    """Same filters and scalar features as 05b.load_layer_matrix, plus list
+    fields whose own key is absent but whose elements path.{i} have
+    activations at every layer. Returns X, y, doc_ids, paths, kind
+    (kind: 0 scalar, 1 list)."""
+    rows = []
+    n_unmatched, unmatched_ex = 0, []
+    for lp in sorted(labels_dir.glob("*.json")):
+        if lp.name.startswith("_"):
+            continue
+        doc_id = lp.stem
+        data = json.load(lp.open())
+        npz = activations_dir / f"{doc_id}.npz"
+        if not npz.exists():
+            continue
+        with np.load(npz) as acts:
+            keys = set(acts.files)
+            elems = {}
+            for k in keys:
+                m = ELEM_RE.match(k)
+                if m:
+                    elems.setdefault((m.group(1), int(m.group(3))), []).append(int(m.group(2)))
+            for fld in data.get("labels", []):
+                if not fld.get("extracted_present", True):
+                    continue
+                ps = fld["path_str"]
+                if all(f"{ps}__layer{L}" in keys for L in layers):
+                    vecs = {}
+                    for L in layers:
+                        v = acts[f"{ps}__layer{L}"].astype(np.float32)
+                        vecs[L] = v[-1] if v.ndim > 1 else v
+                    rows.append((doc_id, ps, 0, int(fld.get("is_error", 0)), vecs))
+                    continue
+                if agg != "none" and all((ps, L) in elems for L in layers):
+                    vecs = {}
+                    for L in layers:
+                        idx = sorted(elems[(ps, L)])
+                        use = idx[-1:] if agg == "last" else idx
+                        lasts = []
+                        for i in use:
+                            v = acts[f"{ps}.{i}__layer{L}"].astype(np.float32)
+                            lasts.append(v[-1] if v.ndim > 1 else v)
+                        vecs[L] = np.mean(lasts, axis=0)
+                    rows.append((doc_id, ps, 1, int(fld.get("is_error", 0)), vecs))
+                    continue
+                n_unmatched += 1
+                if len(unmatched_ex) < 5:
+                    unmatched_ex.append((doc_id[:24], ps, type(fld.get("extracted_value")).__name__))
+    logger.info("fields present but without usable activations: %d, e.g. %s",
+                n_unmatched, unmatched_ex)
+    doc_ids = np.array([r[0] for r in rows])
+    paths = np.array([r[1] for r in rows])
+    kind = np.array([r[2] for r in rows])
+    y = np.array([r[3] for r in rows])
+    X = {L: np.stack([r[4][L] for r in rows]) for L in layers}
+    return X, y, doc_ids, paths, kind, n_unmatched
+
+
 # ----------------------------------------------------------------------------
 # CV
 # ----------------------------------------------------------------------------
@@ -241,11 +308,17 @@ def main():
 
     t0 = time.time()
     logger.info("Loading activations for layers %s ...", layers)
-    X, y, groups = load_layer_matrix(labels_dir, acts_dir, layers)
-    p_docs, paths, p_y = aligned_paths(labels_dir, acts_dir, layers)
-    if not (np.array_equal(p_docs, groups) and np.array_equal(p_y, y)):
-        raise RuntimeError("path alignment with 05b.load_layer_matrix failed; "
-                           "05b's filters have changed, update aligned_paths()")
+    if args.list_agg == "none":
+        X, y, groups = load_layer_matrix(labels_dir, acts_dir, layers)
+        p_docs, paths, p_y = aligned_paths(labels_dir, acts_dir, layers)
+        if not (np.array_equal(p_docs, groups) and np.array_equal(p_y, y)):
+            raise RuntimeError("path alignment with 05b.load_layer_matrix failed; "
+                               "05b's filters have changed, update aligned_paths()")
+        kind = np.zeros(len(y), dtype=int)
+        n_unmatched = None
+    else:
+        X, y, groups, paths, kind, n_unmatched = load_with_lists(
+            labels_dir, acts_dir, layers, args.list_agg)
     logger.info("Loaded in %.0fs", time.time() - t0)
 
     report("=" * 72)
@@ -253,6 +326,9 @@ def main():
     report("=" * 72)
     report(f"fields={len(y)} records={len(set(groups))} errors={int(y.sum())} "
            f"({100*y.mean():.1f}%) dim={X[layers[0]].shape[1]} layers={layers}")
+    report(f"list-agg={args.list_agg}  scalar fields={int((kind == 0).sum())} "
+           f"(err {int(y[kind == 0].sum())})  list fields={int((kind == 1).sum())} "
+           f"(err {int(y[kind == 1].sum())})  present-but-unusable={n_unmatched}")
     recs_with_err = len(set(groups[y == 1]))
     report(f"records with >=1 probe-eligible error: {recs_with_err}")
 
@@ -342,6 +418,11 @@ def main():
     report(f"  per-fold AUROC   = {np.mean(fold_aurocs):.4f} +/- {np.std(fold_aurocs):.4f}")
     report(f"  error base rate  = {y.mean():.4f} (AUPRC of a random scorer)")
     report(f"  layers selected  = {dict(Counter(r['layer'] for r in fold_rows))}")
+    for k, name in ((0, "scalar"), (1, "list")):
+        m = kind == k
+        if m.any():
+            report(f"  {name:6s} fields    : n={int(m.sum())} err={int(y[m].sum())} "
+                   f"AUROC {pooled_auroc(y[m], oof[m]):.4f}")
     report(f"  pooled-OOF AUPRC = {auprc:.4f}")
     report(f"  pooled-OOF AUROC = {head:.4f}   <- headline")
     report(f"  runtime          = {(time.time() - t0) / 60:.1f} min")
@@ -355,11 +436,12 @@ def main():
         "n_errors": int(y.sum()), "outer_folds": fold_rows,
         "fixed_layer": {int(k): v for k, v in fixed.items()},
         "candidate_layers": layers, "C": args.C, "seed": seed,
+        "list_agg": args.list_agg, "n_list_fields": int((kind == 1).sum()),
     }, indent=2))
     np.savez_compressed(
         res_dir / "oof_scores.npz",
         doc_id=groups, path_str=paths, y=y, oof=oof,
-        selected_layer=sel_layer, outer_fold=fold_id,
+        selected_layer=sel_layer, outer_fold=fold_id, kind=kind,
         **{f"fixed_oof_layer{L}": o for L, o in fixed_oof.items()})
     report(f"  saved {res_dir / args.out_name} and {res_dir / 'oof_scores.npz'}")
     return 0
