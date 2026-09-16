@@ -109,6 +109,15 @@ def load_benchmark(cfg: Config, limit_override: int | None = None):
     #         domains=cfg.data.domains or None,
     #         max_documents=max_docs,
     #     )
+    if cfg.data.benchmark == "sob":
+        from probe_extraction.data.sob import SOB
+        max_docs = limit_override if limit_override is not None else cfg.data.max_documents
+        return SOB(
+            benchmark_path=cfg.benchmark_path,
+            split=getattr(cfg.data, "split", "test"),
+            domains=cfg.data.domains or None,
+            max_documents=max_docs,
+        )
     raise ValueError(f"Unknown benchmark: {cfg.data.benchmark!r}")
 
 
