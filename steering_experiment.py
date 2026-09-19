@@ -51,6 +51,7 @@ import json
 import logging
 import pickle
 import sys
+from probe_extraction.extraction.parser import parse_json_output
 import time
 from pathlib import Path
 
@@ -235,14 +236,12 @@ def main():
                 handle.remove()
 
             # ---- score against gold with the pipeline's own matcher ----
-            try:
-                from probe_extraction.extraction.parser import parse_json_response
-                parsed = parse_json_response(out.text)
-            except Exception:
-                parsed = None
+            # Call copied from extractor.py:236. Returns a 3-tuple, not a dict.
+            parsed, parse_error, _json_text = parse_json_output(out.text)
             if parsed is None:
                 n_parse_fail += 1
-                per_doc[doc.doc_id] = {"parse_failed": True}
+                per_doc[doc.doc_id] = {"parse_failed": True,
+                                       "parse_error": parse_error}
                 continue
 
             # Call copied from 02_label.py:153-161 so scoring is identical to
