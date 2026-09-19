@@ -210,9 +210,13 @@ def main():
         n_fields = n_errors = n_parse_fail = n_docs_ok = 0
         per_doc = {}
 
+        n_dropped = 0
         for doc in docs:
             rn = ref_norm_for(doc)
             if rn is None:
+                n_dropped += 1
+                logger.warning("  no layer-%d activations for %s -- DROPPED "
+                               "from this condition", args.layer, doc.doc_id)
                 continue
             text_in = doc.text
             if cfg.extraction.max_input_chars and \
