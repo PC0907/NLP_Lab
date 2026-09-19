@@ -258,19 +258,23 @@ def main():
 
     # ---- prompt, exactly as the extractor builds it ----
     from probe_extraction.extraction.prompts import build_extraction_prompt
-    try:
-        system_msg, user_msg = build_extraction_prompt(
-            document_text=doc.text, schema=doc.schema,
-            template=cfg.extraction.prompt_template,
-            include_schema=cfg.extraction.include_schema,
-            include_examples=cfg.extraction.include_examples,
-        )
-        prompt = llm.format_chat(system_msg, user_msg)
-    except Exception as e:
-        logger.error("Could not build the prompt the same way the extractor "
-                     "does (%s). The prompt MUST match or the comparison is "
-                     "meaningless -- check prompts.py's signature.", e)
-        return 1
+    # Signature and call copied verbatim from extractor.py:204-209. The prompt
+    # must match what the pipeline produces or the comparison is meaningless.
+    # Note extractor.py passes a possibly-truncated `document_text`; at
+    # max_input_chars=600000 this document (1,228 chars) is unaffected, but a
+    # long document would need the same truncation applied here.
+    max_chars = cfg.extraction.max_input_chars
+    document_text = doc.text
+    if max_chars and len(document_text) > max_chars:
+        document_text = document_text[:max_chars]
+        logger.info("Truncated document text to %d chars", max_chars)
+    system_msg, user_msg = build_extraction_prompt(
+        schema=doc.schema,
+        document_text=document_text,
+        include_schema=cfg.extraction.include_schema,
+    )
+    prompt = llm.format_chat(system_msg, user_msg)
+    logger.info("Prompt: %d chars", len(prompt))
 
     dtype = next(llm.model.parameters()).dtype
     device = next(llm.model.parameters()).device
