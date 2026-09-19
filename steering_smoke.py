@@ -160,6 +160,15 @@ def load_direction(path, hidden_dim):
         if v is not None and v.size == hidden_dim:
             logger.info("Direction from: bare sklearn estimator")
             return v
+    # LinearProbe (probe_extraction.probes.linear) stores the vector as a
+    # plain `weights` attribute, not as sklearn's coef_ and not in a dict.
+    for attr in ("weights", "w", "direction"):
+        if hasattr(obj, attr):
+            v = np.asarray(getattr(obj, attr)).ravel()
+            tried.append(f"obj.{attr}")
+            if v.size == hidden_dim:
+                logger.info("Direction from: obj.%s", attr)
+                return v
     if isinstance(obj, dict):
         for k in ("clf", "clf_final", "model", "probe", "estimator"):
             if k in obj:
