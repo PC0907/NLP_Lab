@@ -80,6 +80,9 @@ def parse_args():
                    help="Skip the probe conditions and run only the random "
                         "control. Use when the probe run is already done, so "
                         "the GPU is not spent repeating it.")
+    p.add_argument("--n-random", type=int, default=1,
+                   help="Random control directions. Each is run at every "
+                        "coefficient, so this multiplies cost.")
     p.add_argument("--out-name", default="steering_experiment.json")
     return p.parse_args()
 
