@@ -76,9 +76,10 @@ def parse_args():
                    default=[0.0, 0.3, 0.4, 0.5, -0.3, -0.4, -0.5])
     p.add_argument("--exclude-domains", nargs="*", default=["finance/10kq"])
     p.add_argument("--max-docs", type=int, default=None)
-    p.add_argument("--n-random", type=int, default=1,
-                   help="Random control directions. Each is run at every "
-                        "nonzero coefficient, so this multiplies cost.")
+    p.add_argument("--random-only", action="store_true",
+                   help="Skip the probe conditions and run only the random "
+                        "control. Use when the probe run is already done, so "
+                        "the GPU is not spent repeating it.")
     p.add_argument("--out-name", default="steering_experiment.json")
     return p.parse_args()
 
@@ -195,9 +196,13 @@ def main():
         return float(np.mean(norms)) if norms else None
 
     # ---- conditions ----
-    conditions = [("probe", probe_dir, c) for c in args.coeffs]
+    conditions = [] if args.random_only else [("probe", probe_dir, c)
+                                              for c in args.coeffs]
     for i, r in enumerate(randoms):
-        conditions += [(f"random{i}", r, c) for c in args.coeffs if c != 0.0]
+        # Coefficient 0 included for the random directions too: it must
+        # reproduce the same baseline as the probe run, which is the check
+        # that the two runs are comparable at all.
+        conditions += [(f"random{i}", r, c) for c in args.coeffs]
     logger.info("Conditions: %d, over %d documents = %d generations",
                 len(conditions), len(docs), len(conditions) * len(docs))
 
