@@ -75,6 +75,11 @@ def parse_args():
     p.add_argument("--out-name", type=str, default="nested_lodo.json",
                    help="Filename for the results JSON (so a filtered run doesn't "
                         "overwrite the all-domain run).")
+    p.add_argument("--exclude-gold-empty", action="store_true",
+                   help="Skip fields whose gold is empty at that path "
+                        "(error_type == 'hallucination', matcher.py:65). "
+                        "Sensitivity analysis only: removes positives by "
+                        "construction.")
     return p.parse_args()
 
 
@@ -87,7 +92,8 @@ def _domain_allowed(domain, include, exclude) -> bool:
 
 
 def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
-                      include=None, exclude=None, include_docs=None):
+                      include=None, exclude=None, include_docs=None,
+                      exclude_gold_empty=False):
     """Return per-layer X dict, y, doc_ids — aligned across layers.
 
     Only keeps fields that have activations for ALL candidate layers, so the
@@ -98,6 +104,7 @@ def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
     """
     rows = []  # each: (doc_id, y, {layer: vec})
     skipped_domains = {}
+    n_gold_empty_skipped = 0
     for lp in sorted(labels_dir.glob("*.json")):
         if lp.name.startswith("_"):
             continue
@@ -124,6 +131,12 @@ def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
             for fld in data.get("labels", []):
                 if not fld.get("extracted_present", True):
                     continue
+                # Gold-empty: the model filled a path the annotator left empty.
+                # matcher.py:65 calls these "hallucination", but here most are
+                # annotation omissions with the value present in the document.
+                if exclude_gold_empty and fld.get("error_type") == "hallucination":
+                    n_gold_empty_skipped += 1
+                    continue
                 ps = fld["path_str"]
                 vecs = {}
                 ok = True
@@ -143,6 +156,8 @@ def load_layer_matrix(labels_dir: Path, activations_dir: Path, layers,
     if skipped_domains:
         logger.info("Domain filter skipped: %s",
                     ", ".join(f"{d}={n}" for d, n in sorted(skipped_domains.items())))
+    if exclude_gold_empty:
+        logger.info("Gold-empty fields skipped: %d", n_gold_empty_skipped)
 
     doc_ids = np.array([r[0] for r in rows])
     y = np.array([r[1] for r in rows])
@@ -238,7 +253,8 @@ def main():
     X, y, doc_ids = load_layer_matrix(labels_dir, activations_dir, layers,
                                       include=args.include_domains,
                                       exclude=args.exclude_domains,
-                                      include_docs=include_docs)
+                                      include_docs=include_docs,
+                                      exclude_gold_empty=args.exclude_gold_empty)
     logger.info("Loaded %d fields across %d docs (%d errors, %.1f%%).",
                 len(y), len(set(doc_ids)), int(y.sum()), 100 * y.mean())
 
