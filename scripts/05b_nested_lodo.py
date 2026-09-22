@@ -285,7 +285,8 @@ def main():
         "include_domains": args.include_domains,
         "exclude_domains": args.exclude_domains,
     }, indent=2))
-    logger.info("Saved to %s", out)
+    np.savez(out.with_suffix(".oof.npz"), oof=oof, y=y, doc_ids=doc_ids)
+    logger.info("Saved to %s (+ per-field OOF predictions)", out)
     return 0
 
 
