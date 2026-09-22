@@ -42,7 +42,7 @@ def already_extracted(
 
     The `require_rtokens` arm matters: the first SOB run wrote extractions and
     activations but no per-token reasoning states. Resuming an attribution run
-    over those artifacts must re-extract them rather than skip them, or Stage 7
+    over those artifacts must re-extract them rather than skip them, or Stage 5
     would silently drop the documents for want of a sidecar and the corpus would
     quietly shrink.
     """

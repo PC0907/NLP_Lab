@@ -1,6 +1,6 @@
-"""Tests for Stage 12's repair/damage accounting (scripts/12_regen_evaluate.py).
+"""Tests for Stage 9's repair/damage accounting (scripts/09_regen_evaluate.py).
 
-This is the stage that replaces Stage 9's invented repair=0.7 / damage=0.05 with
+This is the stage that replaces Stage 7's invented repair=0.7 / damage=0.05 with
 measurement, so the accounting is the result. A miscount here would not raise --
 it would produce a clean-looking repair rate that is simply wrong, which is the
 one failure this project cannot ship. Every branch of the outcome table is
@@ -26,7 +26,7 @@ def _load(name: str, rel: str):
     return mod
 
 
-s12 = _load("stage12", "scripts/12_regen_evaluate.py")
+regen_eval = _load("stage09", "scripts/09_regen_evaluate.py")
 
 # The accounting itself lives in the package (importable by name, so the
 # parallel pass can ship it to a worker process); the script keeps only the
@@ -303,7 +303,7 @@ def _curve(y, net_delta, self_out, scores=None, budgets=(0.0, 0.5, 1.0),
            regime="global", doc_ids=None):
     y = np.asarray(y, dtype=np.int64)
     n = len(y)
-    return s12.measured_curve(
+    return regen_eval.measured_curve(
         np.asarray(scores if scores is not None else y, dtype=np.float64),
         y,
         np.asarray(doc_ids if doc_ids is not None else np.zeros(n), dtype=np.int64),
@@ -583,7 +583,7 @@ def _boot_inputs(n_docs=60, fields_per_doc=5, seed=0):
 
 def test_a_real_improvement_gets_a_ci_that_excludes_zero():
     y, doc_ids, net_delta, signals = _boot_inputs()
-    out = s12.bootstrap_significance(
+    out = regen_eval.bootstrap_significance(
         y, doc_ids, net_delta, signals,
         ["probe_fused", "probe_answer", "min_logprob", "mean_logprob"],
         0.20, "global", n_boot=300, seed=0)
@@ -598,7 +598,7 @@ def test_no_improvement_gives_a_ci_that_contains_zero():
     come out significant -- otherwise the test would manufacture results."""
     y, doc_ids, _nd, signals = _boot_inputs()
     net_delta = np.zeros(len(y), dtype=np.int64)
-    out = s12.bootstrap_significance(
+    out = regen_eval.bootstrap_significance(
         y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
         0.20, "global", n_boot=300, seed=0)
     red = out["tests"]["reduction_vs_baseline"]
@@ -609,7 +609,7 @@ def test_no_improvement_gives_a_ci_that_contains_zero():
 
 def test_the_better_signal_beats_the_worse_one():
     y, doc_ids, net_delta, signals = _boot_inputs()
-    out = s12.bootstrap_significance(
+    out = regen_eval.bootstrap_significance(
         y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
         0.20, "global", n_boot=300, seed=0)
     vs = out["tests"]["probe_fused_vs_min_logprob"]
@@ -621,7 +621,7 @@ def test_comparisons_are_paired_within_a_replicate():
     """An unpaired test would compare two independently resampled corpora and
     drown a difference this small in between-corpus variance."""
     y, doc_ids, net_delta, signals = _boot_inputs()
-    out = s12.bootstrap_significance(
+    out = regen_eval.bootstrap_significance(
         y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
         0.20, "global", n_boot=400, seed=0)
     vs = out["tests"]["probe_fused_vs_min_logprob"]
@@ -634,7 +634,7 @@ def test_comparisons_are_paired_within_a_replicate():
 
 def test_every_test_carries_a_holm_adjusted_p_value():
     y, doc_ids, net_delta, signals = _boot_inputs()
-    out = s12.bootstrap_significance(
+    out = regen_eval.bootstrap_significance(
         y, doc_ids, net_delta, signals,
         ["probe_fused", "probe_answer", "min_logprob", "mean_logprob"],
         0.20, "global", n_boot=200, seed=0)
@@ -645,7 +645,7 @@ def test_every_test_carries_a_holm_adjusted_p_value():
 
 def test_the_per_doc_regime_also_produces_intervals():
     y, doc_ids, net_delta, signals = _boot_inputs()
-    out = s12.bootstrap_significance(
+    out = regen_eval.bootstrap_significance(
         y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
         0.20, "per_doc", n_boot=200, seed=0)
     assert out["regime"] == "per_doc"
@@ -655,8 +655,8 @@ def test_the_per_doc_regime_also_produces_intervals():
 def test_the_bootstrap_is_reproducible_from_its_seed():
     y, doc_ids, net_delta, signals = _boot_inputs()
     kw = dict(n_boot=200, seed=7)
-    a = s12.bootstrap_significance(y, doc_ids, net_delta, signals,
+    a = regen_eval.bootstrap_significance(y, doc_ids, net_delta, signals,
                                    ["probe_fused", "min_logprob"], 0.2, "global", **kw)
-    b = s12.bootstrap_significance(y, doc_ids, net_delta, signals,
+    b = regen_eval.bootstrap_significance(y, doc_ids, net_delta, signals,
                                    ["probe_fused", "min_logprob"], 0.2, "global", **kw)
     assert a["tests"] == b["tests"]

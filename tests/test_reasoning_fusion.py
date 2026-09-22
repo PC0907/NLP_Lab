@@ -14,7 +14,7 @@ import pathlib
 import numpy as np
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
-_MOD = _ROOT / "scripts" / "06_reasoning_fusion_lodo.py"
+_MOD = _ROOT / "archive" / "scripts" / "06_reasoning_fusion_lodo.py"
 _spec = importlib.util.spec_from_file_location("reasoning_fusion_iso", _MOD)
 rf = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rf)

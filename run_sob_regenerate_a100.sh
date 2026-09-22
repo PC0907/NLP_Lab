@@ -16,7 +16,7 @@
 # invented numbers: a re-asked wrong field is repaired with probability 0.7, a
 # re-asked right field is broken with probability 0.05. This job replaces the
 # assumption with measurement -- it actually re-asks the model, three times per
-# document at temperature 0.7, and saves what it said. Stage 12 then checks what
+# document at temperature 0.7, and saves what it said. Stage 9 then checks what
 # really happened against gold.
 #
 # Greedy decoding is NOT usable here: a temperature-0 re-run reproduces the
@@ -80,7 +80,7 @@ echo "=== GPU GUARD PASSED ==="
 
 echo ""
 echo "=== STAGE 11: regenerate ${SAMPLES} samples/document ${SHARD_ARG} ==="
-python scripts/11_regenerate.py --config "$CFG" \
+python scripts/08_regenerate.py --config "$CFG" \
     --samples "$SAMPLES" --resume ${SHARD_ARG}
 
 echo ""
@@ -103,14 +103,14 @@ for f in files:
             parse += 1
 print(f"samples: {tot} across {len(files)} documents")
 if tot:
-    print(f"  hit max_new_tokens : {trunc} ({100*trunc/tot:.1f}%)  -- excluded by Stage 12")
+    print(f"  hit max_new_tokens : {trunc} ({100*trunc/tot:.1f}%)  -- excluded by Stage 9")
     print(f"  parse failures     : {parse} ({100*parse/tot:.1f}%)")
     if trunc / tot > 0.25:
         print("  WARNING: a quarter or more of the resamples were cut off. Their JSON")
-        print("           is a parser reconstruction, so Stage 12 drops them and the")
+        print("           is a parser reconstruction, so Stage 9 drops them and the")
         print("           measurement loses that much coverage. Consider raising")
         print("           model.max_new_tokens before reading the result as final.")
 PY
 
 echo ""
-echo "Next: sbatch run_sob_regen_eval.sh   (Stage 9 rescore + Stage 12 measurement, CPU)"
+echo "Next: sbatch run_sob_regen_eval.sh   (Stage 7 rescore + Stage 9 measurement, CPU)"

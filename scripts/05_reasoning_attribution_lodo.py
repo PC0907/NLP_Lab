@@ -1,4 +1,4 @@
-"""Stage 7 (reasoning-trace paper): FIELD-LOCALIZED reasoning attribution, LODO.
+"""Stage 5 (reasoning-trace paper): FIELD-LOCALIZED reasoning attribution, LODO.
 
 The document-level reasoning fusion (Stage 6) was ~null because a doc-level
 vector is constant across a document's fields and cannot change within-document
@@ -34,7 +34,7 @@ Requires a Stage-1 run with REASONING_TOKEN_LAYERS set (so the per-token
 reasoning states + token-string sidecars exist).
 
 Usage:
-    python scripts/07_reasoning_attribution_lodo.py --config CFG --layers 16 19 23 26 --jobs -1
+    python scripts/05_reasoning_attribution_lodo.py --config CFG --layers 16 19 23 26 --jobs -1
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ def load_attribution_docs(activations_dir: Path, labels_dir: Path,
                 continue
             docs.append({
                 "doc_id": doc_id,
-                # Field identity is kept so downstream stages (Stage 9's
+                # Field identity is kept so downstream stages (Stage 7's
                 # selective-regeneration curves) can join these rows against the
                 # per-field token-logprob baselines by path.
                 "path_strs": path_strs,
@@ -278,7 +278,7 @@ def main() -> int:
     args = parse_args()
     cfg = load_config(args.config)
     setup_logging(level=cfg.logging.level, log_dir=cfg.logging.log_dir,
-                  log_name="07_reasoning_attribution_lodo", log_to_file=cfg.logging.log_to_file)
+                  log_name="05_reasoning_attribution_lodo", log_to_file=cfg.logging.log_to_file)
 
     layers = args.layers or cfg.activations.layers
     activations_dir = cfg.artifacts_path / "activations"

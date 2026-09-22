@@ -38,7 +38,7 @@ export PYTHONPATH=$HOME/NLP_Lab/src:$PYTHONPATH
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export HF_DATASETS_OFFLINE=1
 
-# MUST match the first attribution run: Stage 7 requires every requested layer
+# MUST match the first attribution run: Stage 5 requires every requested layer
 # to be present in every document, so a narrower set here would strand the
 # documents already on disk.
 export REASONING_TOKEN_LAYERS="16,19,23,26"

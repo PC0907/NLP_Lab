@@ -1,13 +1,13 @@
 """What a regeneration actually did to a document, field by field.
 
-Stage 9 priced selective regeneration under an assumption: a re-asked wrong
+Stage 7 priced selective regeneration under an assumption: a re-asked wrong
 field becomes right with probability 0.7, a re-asked right field breaks with
 probability 0.05. Those numbers were invented. This module is how they get
 replaced by measurement -- it takes what the model actually said on a second
-attempt (Stage 11), swaps it into the original record one field at a time, and
+attempt (Stage 8), swaps it into the original record one field at a time, and
 re-labels against gold to see what really happened.
 
-It lives in the package rather than inside scripts/12_regen_evaluate.py for two
+It lives in the package rather than inside scripts/09_regen_evaluate.py for two
 reasons: the accounting is the paper's central result and deserves direct unit
 tests, and the per-document worker has to be importable by name so it survives
 being shipped to a joblib subprocess.

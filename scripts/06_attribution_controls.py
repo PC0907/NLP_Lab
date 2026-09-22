@@ -1,6 +1,6 @@
-"""Stage 8 (reasoning-trace paper): CONTROLS for the field-localized attribution gain.
+"""Stage 6 (reasoning-trace paper): CONTROLS for the field-localized attribution gain.
 
-Stage 7 showed `answer + field-localized reasoning vector` beats `answer` alone
+Stage 5 showed `answer + field-localized reasoning vector` beats `answer` alone
 under LODO (paired Wilcoxon p=0.044 at layer 19 on the 300-doc SOB run). The
 first question any reviewer asks is: *is that gain actually about localization,
 or would ANY extra 3584 dimensions have done the same?* This stage answers it
@@ -39,7 +39,7 @@ p-value over the whole family of tests (the multiple-comparison caveat Update 07
 flagged as open).
 
 Usage:
-    python scripts/08_attribution_controls.py --config CFG --layers 19 --jobs -1
+    python scripts/06_attribution_controls.py --config CFG --layers 19 --jobs -1
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_by_path(name: str, rel: str):
-    """Import a module by file path (Stage 7 starts with a digit, and the
+    """Import a module by file path (Stage 5 starts with a digit, and the
     attribution core must bypass the extraction package's torch import)."""
     spec = importlib.util.spec_from_file_location(name, _ROOT / rel)
     mod = importlib.util.module_from_spec(spec)
@@ -72,7 +72,7 @@ def _load_by_path(name: str, rel: str):
 
 ra = _load_by_path("reasoning_attribution",
                    "src/probe_extraction/extraction/reasoning_attribution.py")
-s7 = _load_by_path("stage07", "scripts/07_reasoning_attribution_lodo.py")
+attribution = _load_by_path("stage05", "scripts/05_reasoning_attribution_lodo.py")
 
 # The claim + its controls. `answer` is the baseline all deltas are measured from.
 #
@@ -205,7 +205,7 @@ def build_control_features(doc: dict, layer: int, variant: str,
 
 
 def lodo_eval_variant(docs, layer, variant, *, C=1.0, n_jobs=-1, seed=0):
-    """LODO over a control variant. Mirrors Stage 7's lodo_eval but builds
+    """LODO over a control variant. Mirrors Stage 5's lodo_eval but builds
     features through build_control_features so the controls stay in one place."""
     rng = np.random.default_rng(seed)
     feats = [build_control_features(d, layer, variant, rng).astype(np.float64)
@@ -216,7 +216,7 @@ def lodo_eval_variant(docs, layer, variant, *, C=1.0, n_jobs=-1, seed=0):
 
     from joblib import Parallel, delayed
     out = Parallel(n_jobs=n_jobs, prefer="processes")(
-        delayed(s7._fit_fold)(full_X, full_y, int(bounds[i]), int(bounds[i + 1]), C)
+        delayed(attribution._fit_fold)(full_X, full_y, int(bounds[i]), int(bounds[i + 1]), C)
         for i in range(len(docs))
     )
 
@@ -400,7 +400,7 @@ def main() -> int:
     args = parse_args()
     cfg = load_config(args.config)
     setup_logging(level=cfg.logging.level, log_dir=cfg.logging.log_dir,
-                  log_name="08_attribution_controls", log_to_file=cfg.logging.log_to_file)
+                  log_name="06_attribution_controls", log_to_file=cfg.logging.log_to_file)
 
     layers = args.layers
     activations_dir = cfg.artifacts_path / "activations"
@@ -409,7 +409,7 @@ def main() -> int:
     results_dir = cfg.artifacts_path / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    docs = s7.load_attribution_docs(activations_dir, labels_dir, extractions_dir, layers)
+    docs = attribution.load_attribution_docs(activations_dir, labels_dir, extractions_dir, layers)
     if len(docs) < 2:
         logger.error("Need >=2 docs with per-token reasoning states; found %d.", len(docs))
         return 1
@@ -537,7 +537,7 @@ def main() -> int:
                        if v[0] in variants and v[1] in variants}
         sig = {}
         for name, (base, test) in comparisons.items():
-            md, p, n = s7.paired_test(res[base]["_per_doc"], res[test]["_per_doc"])
+            md, p, n = attribution.paired_test(res[base]["_per_doc"], res[test]["_per_doc"])
             sig[name] = {"baseline": base, "variant": test, "mean_delta": md,
                          "p_value": p, "n_pairs": n,
                          "bootstrap": bootstrap_delta_ci(res[base]["_per_doc"],

@@ -1,4 +1,4 @@
-"""Tests for Stage 9's selective-regeneration curves (scripts/09_...py).
+"""Tests for Stage 7's selective-regeneration curves (scripts/09_...py).
 
 These curves are the project's actual deliverable (cost vs quality), so the
 budget accounting has to be exactly right: how many fields get flagged, how many
@@ -25,7 +25,7 @@ def _load(name: str, rel: str):
     return mod
 
 
-s9 = _load("stage09", "scripts/09_selective_regeneration_sob.py")
+selective = _load("stage07", "scripts/07_selective_regeneration_sob.py")
 
 
 def _rng(seed: int = 0):
@@ -37,12 +37,12 @@ def _rng(seed: int = 0):
 def test_global_budget_flags_the_right_count():
     scores = np.linspace(0, 1, 100)
     for b, k in [(0.0, 0), (0.05, 5), (0.2, 20), (0.5, 50), (1.0, 100)]:
-        assert s9._flag_global(scores, b, _rng()).sum() == k
+        assert selective._flag_global(scores, b, _rng()).sum() == k
 
 
 def test_global_budget_takes_the_highest_scores():
     scores = np.array([0.1, 0.9, 0.5, 0.7])
-    flagged = s9._flag_global(scores, 0.5, _rng())
+    flagged = selective._flag_global(scores, 0.5, _rng())
     assert flagged.tolist() == [False, True, False, True]
 
 
@@ -50,14 +50,14 @@ def test_global_ties_are_broken_randomly_not_by_position():
     """A degenerate all-equal score must behave like chance. If ties fell back
     to array order it would inherit document ordering and look better than it is."""
     scores = np.zeros(200)
-    picks = {tuple(np.flatnonzero(s9._flag_global(scores, 0.1, _rng(s)))) for s in range(5)}
+    picks = {tuple(np.flatnonzero(selective._flag_global(scores, 0.1, _rng(s)))) for s in range(5)}
     assert len(picks) > 1
 
 
 def test_per_doc_budget_spends_within_each_document():
     doc_ids = np.array([0, 0, 0, 0, 1, 1])
     scores = np.array([0.1, 0.2, 0.3, 0.9, 0.4, 0.8])
-    flagged = s9._flag_per_doc(scores, doc_ids, 0.5, _rng())
+    flagged = selective._flag_per_doc(scores, doc_ids, 0.5, _rng())
     # 2 of doc 0's 4 fields, 1 of doc 1's 2 fields -- its top scorers.
     assert flagged[:4].sum() == 2 and flagged[4:].sum() == 1
     assert flagged[3] and flagged[5]
@@ -68,21 +68,21 @@ def test_per_doc_budget_rounds_up_so_a_small_budget_still_acts():
     reach at least one field per document, or small documents get ignored."""
     doc_ids = np.array([0, 0, 0, 1, 1, 1])
     scores = np.array([0.1, 0.5, 0.9, 0.2, 0.4, 0.8])
-    flagged = s9._flag_per_doc(scores, doc_ids, 0.01, _rng())
+    flagged = selective._flag_per_doc(scores, doc_ids, 0.01, _rng())
     assert flagged[:3].sum() == 1 and flagged[3:].sum() == 1
 
 
 def test_per_doc_budget_endpoints():
     doc_ids = np.array([0, 0, 1, 1, 1])
     scores = np.arange(5, dtype=float)
-    assert s9._flag_per_doc(scores, doc_ids, 0.0, _rng()).sum() == 0
-    assert s9._flag_per_doc(scores, doc_ids, 1.0, _rng()).all()
+    assert selective._flag_per_doc(scores, doc_ids, 0.0, _rng()).sum() == 0
+    assert selective._flag_per_doc(scores, doc_ids, 1.0, _rng()).all()
 
 
 # --- curve metrics ---------------------------------------------------------
 
 def _curve(scores, y, doc_ids, budgets, regime="global", repair=(1.0,), damage=0.0):
-    return s9.curve(scores, y, doc_ids, budgets, regime,
+    return selective.curve(scores, y, doc_ids, budgets, regime,
                     repair_rates=list(repair), damage_rate=damage, rng=_rng())
 
 

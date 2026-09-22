@@ -1,12 +1,12 @@
-"""Stage 12: what real selective regeneration actually BUYS (CPU).
+"""Stage 9: what real selective regeneration actually BUYS (CPU).
 
-Stage 9 produced the cost-quality curve under an assumption: a re-asked wrong
+Stage 7 produced the cost-quality curve under an assumption: a re-asked wrong
 field becomes right with probability 0.7, a re-asked right field breaks with
 probability 0.05. Those two numbers were invented. Everything downstream of them
 -- the post-regeneration error rate, the break-even analysis -- inherited that
 invention.
 
-This stage removes it. Stage 11 actually re-asked the model. Here we spend a
+This stage removes it. Stage 8 actually re-asked the model. Here we spend a
 budget the way the paper says we would, swap in what the model actually said,
 re-label the result against gold with the SAME matcher Stage 2 used, and count
 what really happened.
@@ -35,7 +35,7 @@ selected budgets jointly (all flagged fields swapped together, one re-labeling)
 and reports the discrepancy. Budget 1.0 is always checked, since regenerating
 everything is the most interaction-heavy case there is.
 
-THREE REGENERATION STRATEGIES, all free from the same Stage 11 run:
+THREE REGENERATION STRATEGIES, all free from the same Stage 8 run:
     first        the first usable resample -- the honest k=1 deployment cost
     vote         plurality value across the usable resamples (self-consistency)
     vote_strict  the same, but only where the resamples AGREE (>=2 and a strict
@@ -49,10 +49,10 @@ CONTROLS reported alongside:
     * budget 1.0 = regenerate everything, the blanket-regeneration baseline
     * random and log-prob flagging at every matched budget
 
-Requires Stage 9 (for artifacts/results/oof_field_scores.json) and Stage 11.
+Requires Stage 7 (for artifacts/results/oof_field_scores.json) and Stage 8.
 
 Usage:
-    python scripts/12_regen_evaluate.py --config CFG --jobs -1
+    python scripts/09_regen_evaluate.py --config CFG --jobs -1
 """
 
 from __future__ import annotations
@@ -96,12 +96,12 @@ def _load_by_path(name: str, rel: str):
     return mod
 
 
-# Stage 9 owns the flagging rules; reusing them (rather than reimplementing)
+# Stage 7 owns the flagging rules; reusing them (rather than reimplementing)
 # is what makes the measured curve comparable to the simulated one.
-s9 = _load_by_path("stage09", "scripts/09_selective_regeneration_sob.py")
-# Stage 8 owns the multiple-comparison correction, so the regeneration results
+selective = _load_by_path("stage07", "scripts/07_selective_regeneration_sob.py")
+# Stage 6 owns the multiple-comparison correction, so the regeneration results
 # are corrected exactly the way the AUROC results were.
-s8 = _load_by_path("stage08", "scripts/08_attribution_controls.py")
+controls = _load_by_path("stage06", "scripts/06_attribution_controls.py")
 
 
 def _stage02():
@@ -124,12 +124,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Measure real selective regeneration.")
     p.add_argument("--config", required=True)
     p.add_argument("--scores-name", default="oof_field_scores.json",
-                   help="Stage 9's per-field OOF score dump, under results/.")
+                   help="Stage 7's per-field OOF score dump, under results/.")
     p.add_argument("--strategies", nargs="*", default=list(STRATEGIES),
                    choices=list(STRATEGIES))
     p.add_argument("--signals", nargs="*", default=list(SIGNALS),
                    choices=list(SIGNALS))
-    p.add_argument("--budgets", type=float, nargs="*", default=s9.DEFAULT_BUDGETS)
+    p.add_argument("--budgets", type=float, nargs="*", default=selective.DEFAULT_BUDGETS)
     p.add_argument("--checkpoint-budgets", type=float, nargs="*",
                    default=[0.10, 0.20, 1.00],
                    help="Budgets to re-verify with a JOINT re-labeling, testing "
@@ -137,7 +137,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--checkpoint-signal", default="probe_fused",
                    help="Signal whose flags the joint check uses.")
     p.add_argument("--allow-partial", action="store_true",
-                   help="Proceed even if some scored documents have no Stage 11 "
+                   help="Proceed even if some scored documents have no Stage 8 "
                         "regeneration. Off by default: a partial run would "
                         "silently report a number computed on a subset.")
     p.add_argument("--limit-docs", type=int, default=None,
@@ -166,8 +166,8 @@ def measured_curve(scores: np.ndarray, y: np.ndarray, doc_ids: np.ndarray,
     base_errors = int(y.sum())
     rows = []
     for b in budgets:
-        flagged = (s9._flag_global(scores, b, rng) if regime == "global"
-                   else s9._flag_per_doc(scores, doc_ids, b, rng))
+        flagged = (selective._flag_global(scores, b, rng) if regime == "global"
+                   else selective._flag_per_doc(scores, doc_ids, b, rng))
         k = int(flagged.sum())
         caught = int(y[flagged].sum())
         retained = ~flagged
@@ -200,7 +200,7 @@ def measured_curve(scores: np.ndarray, y: np.ndarray, doc_ids: np.ndarray,
     cov = np.array([1.0 - r["actual_frac_flagged"] for r in rows])
     risk = np.array([r["selective_risk"] for r in rows])
     order = np.argsort(cov)
-    aurc = float(s9._trapezoid(risk[order], cov[order])) if len(order) > 1 else None
+    aurc = float(selective._trapezoid(risk[order], cov[order])) if len(order) > 1 else None
     return {"rows": rows, "aurc": aurc}
 
 
@@ -249,7 +249,7 @@ def bootstrap_significance(y, doc_ids, net_delta, signals, sig_names,
     per_doc_flag = {}
     if regime == "per_doc":
         for s in sig_names:
-            per_doc_flag[s] = s9._flag_per_doc(signals[s], doc_ids, budget,
+            per_doc_flag[s] = selective._flag_per_doc(signals[s], doc_ids, budget,
                                                np.random.default_rng(seed))
 
     reduction, rates = [], {s: [] for s in sig_names}
@@ -280,7 +280,7 @@ def bootstrap_significance(y, doc_ids, net_delta, signals, sig_names,
     tests = {"reduction_vs_baseline": _boot_summary(reduction)}
     for s in diffs:
         tests[f"{ref}_vs_{s}"] = _boot_summary(diffs[s])
-    holm = s8.holm_bonferroni({k: v["p_value"] for k, v in tests.items()})
+    holm = controls.holm_bonferroni({k: v["p_value"] for k, v in tests.items()})
     for k, v in tests.items():
         v["p_holm"] = holm.get(k)
 
@@ -300,7 +300,7 @@ def bootstrap_significance(y, doc_ids, net_delta, signals, sig_names,
 # ---------------------------------------------------------------------------
 
 def _load_scored_fields(scores_path: Path, labels_dir: Path):
-    """Join Stage 9's scored rows to the JSON path of each field.
+    """Join Stage 7's scored rows to the JSON path of each field.
 
     The score dump identifies fields by path_str; swapping needs the structured
     path, which lives in the Stage 2 label file. Labels are also the source of
@@ -341,7 +341,7 @@ def main() -> int:
     args = parse_args()
     cfg = load_config(args.config)
     setup_logging(level=cfg.logging.level, log_dir=cfg.logging.log_dir,
-                  log_name="12_regen_evaluate", log_to_file=cfg.logging.log_to_file)
+                  log_name="09_regen_evaluate", log_to_file=cfg.logging.log_to_file)
 
     artifacts = cfg.artifacts_path
     results_dir = artifacts / "results"
@@ -351,11 +351,11 @@ def main() -> int:
 
     scores_path = results_dir / args.scores_name
     if not scores_path.exists():
-        logger.error("No OOF score dump at %s. Run Stage 9 first -- it writes "
+        logger.error("No OOF score dump at %s. Run Stage 7 first -- it writes "
                      "the per-field scores this stage ranks by.", scores_path)
         return 1
     if not regen_dir.is_dir():
-        logger.error("No regenerations at %s -- run Stage 11 first.", regen_dir)
+        logger.error("No regenerations at %s -- run Stage 8 first.", regen_dir)
         return 1
 
     dump, scored, doc_order, n_no_path, n_y_mismatch = _load_scored_fields(
@@ -366,17 +366,17 @@ def main() -> int:
     if n_y_mismatch:
         logger.error("%d scored fields disagree with the current labels. The "
                      "score dump and the labels came from different Stage 2 "
-                     "runs; re-run Stage 9 against these labels.", n_y_mismatch)
+                     "runs; re-run Stage 7 against these labels.", n_y_mismatch)
         return 1
 
-    # Restrict to documents Stage 11 actually regenerated.
+    # Restrict to documents Stage 8 actually regenerated.
     missing = [d for d in doc_order if not (regen_dir / f"{d}.json").exists()]
     if missing:
         msg = ("%d of %d scored documents have no regeneration." %
                (len(missing), len(doc_order)))
         if not args.allow_partial:
             logger.error("%s Refusing to report a number computed on a subset. "
-                         "Finish Stage 11 (it has --resume), or pass "
+                         "Finish Stage 8 (it has --resume), or pass "
                          "--allow-partial deliberately. First few: %s",
                          msg, ", ".join(missing[:5]))
             return 1
@@ -503,7 +503,7 @@ def main() -> int:
         for b in args.checkpoint_budgets:
             name = f"{args.checkpoint_signal}@{b:g}"
             ck_names.append(name)
-            mask = s9._flag_global(signals[args.checkpoint_signal], b,
+            mask = selective._flag_global(signals[args.checkpoint_signal], b,
                                    np.random.default_rng(args.seed))
             for i in np.flatnonzero(mask):
                 d, ps = rows_meta[i]
@@ -573,7 +573,7 @@ def main() -> int:
         logger.info("Swap outcomes (all scored fields): %s", outcome_counts)
         logger.info("MEASURED repair rate %.3f (of %d available errors); "
                     "MEASURED damage rate %.3f (of %d available correct fields). "
-                    "Stage 9 assumed 0.700 / 0.050.",
+                    "Stage 7 assumed 0.700 / 0.050.",
                     measured["repair_rate"] or 0.0, n_avail_err,
                     measured["damage_rate"] or 0.0, n_avail_ok)
 
@@ -611,7 +611,7 @@ def main() -> int:
                 else:
                     actual += entry["errors"]
             b = float(name.rsplit("@", 1)[1])
-            mask = s9._flag_global(signals[args.checkpoint_signal], b,
+            mask = selective._flag_global(signals[args.checkpoint_signal], b,
                                    np.random.default_rng(args.seed))
             pred = base_errors + int(net_delta[mask].sum())
             validation.append({

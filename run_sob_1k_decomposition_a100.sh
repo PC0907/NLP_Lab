@@ -58,7 +58,7 @@ hostname; nproc
 
 echo ""
 echo "=== DECOMPOSITION TEST (layer 19) ==="
-python scripts/08_attribution_controls.py --config "$CFG" \
+python scripts/06_attribution_controls.py --config "$CFG" \
     --layers 19 --jobs -1 --bootstrap 2000 \
     --variants answer fused_attr ctrl_docmean ctrl_centered \
                fused_decomposed ctrl_docmean_pad \

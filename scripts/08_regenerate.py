@@ -1,16 +1,16 @@
-"""Stage 11: REAL regeneration pass (GPU).
+"""Stage 8: REAL regeneration pass (GPU).
 
-Stage 9 measured what selective regeneration would be worth *under an
+Stage 7 measured what selective regeneration would be worth *under an
 assumption* -- that a re-asked wrong field is repaired with probability 0.7 and
 a re-asked correct field is broken with probability 0.05. Those numbers were
 invented. This stage replaces them with measurement: it actually re-asks the
-model, and Stage 12 checks what actually happened against gold.
+model, and Stage 9 checks what actually happened against gold.
 
 What it does. For every document that already has an extraction, it re-runs the
 model `--samples` times at a non-zero temperature and saves the parsed JSON of
 each attempt. Nothing is selected here and nothing is compared: this stage only
 produces the raw material. Which fields get swapped in, at which budget, and
-whether that helped, is Stage 12's job -- so one regeneration pass serves every
+whether that helped, is Stage 9's job -- so one regeneration pass serves every
 budget and every scoring signal, instead of re-running the model per budget.
 
 Two design points worth stating, because the result depends on them:
@@ -29,7 +29,7 @@ fields; regeneration only needs the values. Skipping capture makes the pass
 cheaper and keeps the artifacts small.
 
 Usage:
-    python scripts/11_regenerate.py --config CFG [--samples 3] [--resume]
+    python scripts/08_regenerate.py --config CFG [--samples 3] [--resume]
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def main() -> int:
     args = parse_args()
     cfg = load_config(args.config)
     setup_logging(level=cfg.logging.level, log_dir=cfg.logging.log_dir,
-                  log_name="11_regenerate", log_to_file=cfg.logging.log_to_file)
+                  log_name="08_regenerate", log_to_file=cfg.logging.log_to_file)
 
     temperature = (args.temperature if args.temperature is not None
                    else cfg.selective_regen.resample_temperature)
@@ -112,7 +112,7 @@ def main() -> int:
         logger.error("No extractions at %s -- run Stage 1 first.", extractions_dir)
         return 1
 
-    # Only documents that were actually extracted can be regenerated: Stage 12
+    # Only documents that were actually extracted can be regenerated: Stage 9
     # compares against the original values, so a document with no original is
     # meaningless here.
     have_extraction = {p.stem for p in extractions_dir.glob("*.json")
@@ -228,11 +228,11 @@ def main() -> int:
     logger.info("  parse failures : %d / %d (%.1f%%)",
                 n_parse_fail, total, 100 * n_parse_fail / max(total, 1))
     logger.info("  hit max_new_tokens: %d / %d (%.1f%%) -- these are excluded "
-                "from Stage 12, since a cut-off generation's JSON is a parser "
+                "from Stage 9, since a cut-off generation's JSON is a parser "
                 "reconstruction rather than something the model committed to.",
                 n_truncated, total, 100 * n_truncated / max(total, 1))
     logger.info("Regenerations: %s", regen_dir)
-    logger.info("Next: python scripts/12_regen_evaluate.py --config %s", args.config)
+    logger.info("Next: python scripts/09_regen_evaluate.py --config %s", args.config)
     return 0
 
 

@@ -13,7 +13,7 @@
 #
 # Keep the capture layers IDENTICAL to the first run:
 #   REASONING_TOKEN_LAYERS="16,19,23,26"   REASONING_TOKEN_CAP="2048"
-# Stage 7 requires every requested layer to be present in every document, so
+# Stage 5 requires every requested layer to be present in every document, so
 # narrowing the layer set here would strand the 300 documents already on disk.
 #
 # Disk: per-token reasoning states dominate.

@@ -1,4 +1,4 @@
-"""Stage 9 (reasoning-trace paper): what the trust signal is WORTH.
+"""Stage 7 (reasoning-trace paper): what the trust signal is WORTH.
 
 Stages 3-8 answer "can we detect wrong fields?" in AUROC. AUROC is not the
 project's deliverable -- the deliverable is the cost-quality tradeoff of
@@ -41,7 +41,7 @@ Requires a completed Stage 2 (labels) and a Stage 1 run with
 REASONING_TOKEN_LAYERS set.
 
 Usage:
-    python scripts/09_selective_regeneration_sob.py --config CFG --layer 19 --jobs -1
+    python scripts/07_selective_regeneration_sob.py --config CFG --layer 19 --jobs -1
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _load_by_path(name: str, rel: str):
     return mod
 
 
-s7 = _load_by_path("stage07", "scripts/07_reasoning_attribution_lodo.py")
+attribution = _load_by_path("stage05", "scripts/05_reasoning_attribution_lodo.py")
 
 # Includes 0.0 so the risk-coverage curve spans the full coverage range and AURC
 # is integrated over [0, 1] rather than [0, 0.95].
@@ -113,13 +113,13 @@ def lodo_oof_scores(docs, layer, variant, *, C=1.0, n_jobs=-1):
     `docs` (one array per document, None where the fold was degenerate)."""
     from joblib import Parallel, delayed
 
-    feats = [s7.build_features(d, layer, variant).astype(np.float64) for d in docs]
+    feats = [attribution.build_features(d, layer, variant).astype(np.float64) for d in docs]
     full_X = np.concatenate(feats, axis=0)
     full_y = np.concatenate([d["y"] for d in docs], axis=0)
     bounds = np.concatenate([[0], np.cumsum([len(d["y"]) for d in docs])])
 
     out = Parallel(n_jobs=n_jobs, prefer="processes")(
-        delayed(s7._fit_fold)(full_X, full_y, int(bounds[i]), int(bounds[i + 1]), C)
+        delayed(attribution._fit_fold)(full_X, full_y, int(bounds[i]), int(bounds[i + 1]), C)
         for i in range(len(docs))
     )
     return [None if r is None else r[1] for r in out]
@@ -248,7 +248,7 @@ def main() -> int:
     results_dir = cfg.artifacts_path / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    docs = s7.load_attribution_docs(activations_dir, labels_dir, extractions_dir, [L])
+    docs = attribution.load_attribution_docs(activations_dir, labels_dir, extractions_dir, [L])
     if len(docs) < 2:
         logger.error("Need >=2 docs with per-token reasoning states; found %d.", len(docs))
         return 1
@@ -298,7 +298,7 @@ def main() -> int:
                 "Dropped %d fields lacking a signal.",
                 len(y), n_docs_eval, int(y.sum()), 100 * y.mean(), n_drop)
 
-    # Persist the out-of-fold scores, field by field, so Stage 12 can rank the
+    # Persist the out-of-fold scores, field by field, so Stage 9 can rank the
     # SAME fields by the SAME numbers without re-running the LODO sweep (and
     # without needing the activations on disk). If the two stages recomputed
     # the scores independently they could drift apart, and the simulated curve
@@ -318,7 +318,7 @@ def main() -> int:
             for i, (doc_id, ps) in enumerate(keys)
         ],
     }, indent=2))
-    logger.info("Per-field OOF scores -> %s (Stage 12 reads this)", scores_path)
+    logger.info("Per-field OOF scores -> %s (Stage 9 reads this)", scores_path)
 
     aurocs = {k: (float(roc_auc_score(y, v)) if y.sum() not in (0, len(y)) else None)
               for k, v in signals.items()}

@@ -66,7 +66,7 @@ python scripts/04_evaluate.py --config "$CFG"
 
 echo ""
 echo "=== SELECTION TEST: which reasoning tokens carry the signal? ==="
-python scripts/08_attribution_controls.py --config "$CFG" \
+python scripts/06_attribution_controls.py --config "$CFG" \
     --layers 19 --jobs -1 --bootstrap 2000 \
     --variants answer fused_attr ctrl_docmean ctrl_tracemean \
     --out-name selection_test.json

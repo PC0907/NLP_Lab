@@ -1,5 +1,12 @@
 # HPC Cluster Guide — NLP Lab on Bender
 
+> **Note (2026-09-23).** Some examples below reference the partner track's
+> run scripts (`run_analysis_*.sh`, `run_extraction_*.sh`), which are no
+> longer on this branch, and stage numbers from before the pipeline was
+> renumbered. See [`../archive/README.md`](../archive/README.md) for the
+> old→new stage mapping. The cluster instructions themselves are current.
+
+
 Practical guide for running the probe-based trust signals project on the University of Bonn Bender HPC cluster. Written for future reference and onboarding new chat sessions.
 
 ---

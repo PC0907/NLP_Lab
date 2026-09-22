@@ -1,5 +1,12 @@
 # Troubleshooting Guide
 
+> **Note (2026-09-23).** Some examples below reference the partner track's
+> run scripts (`run_analysis_*.sh`, `run_extraction_*.sh`), which are no
+> longer on this branch, and stage numbers from before the pipeline was
+> renumbered. See [`../archive/README.md`](../archive/README.md) for the
+> old→new stage mapping. The cluster instructions themselves are current.
+
+
 Common errors encountered during development on the University of Bonn Bender HPC cluster, organized by category. Each entry includes the symptom, root cause, and fix.
 
 ---

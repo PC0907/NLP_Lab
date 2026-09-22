@@ -1,6 +1,6 @@
 """Tests for leaf addressing in a parsed JSON document.
 
-Stage 12's measured repair rate depends entirely on replacing the right leaf.
+Stage 9's measured repair rate depends entirely on replacing the right leaf.
 A wrong set would not raise -- it would quietly produce a hybrid record that
 does not correspond to what was flagged, and the resulting number would look
 perfectly plausible. So the failure modes are pinned down here.

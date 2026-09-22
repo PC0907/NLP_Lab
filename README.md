@@ -18,15 +18,30 @@ The probe itself is a means, not the end. The headline result is a Pareto
 curve comparing probe-guided selective regeneration against baselines on
 extraction accuracy vs. compute cost.
 
-## Tracks
+## Start here
 
-The project runs on two parallel tracks that share this pipeline:
+This branch holds the **reasoning-trace track**: DeepSeek-R1 on SOB, asking
+whether a *reasoning model's* chain of thought carries error information beyond
+the answer token — and what acting on that information is actually worth.
 
-- **`main`** — Qwen3.5 on ExtractBench (document extraction).
-- **`adnan-dev`** — DeepSeek-R1 on SOB, asking whether a *reasoning model's*
-  chain of thought carries error information beyond the answer token.
-  Start at **[`docs/REASONING_TRACK.md`](docs/REASONING_TRACK.md)** for that
-  track's results, pipeline and reproduction steps.
+- **[`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md)** — read this first:
+  dataset, method, full results, limitations, reproduction steps.
+- **[`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md)** — every module, every design
+  decision, and the reasoning behind them.
+- [`docs/REASONING_TRACK.md`](docs/REASONING_TRACK.md) — condensed pipeline and
+  result-file map.
+- [`archive/README.md`](archive/README.md) — superseded work, and the old→new
+  stage mapping for documents written before the pipeline was renumbered.
+
+The project also has a partner track (Qwen3.5 on ExtractBench) that shares this
+library and lives on its own branch. Its experiment scripts and configs are not
+on this branch; the benchmark loaders it uses remain in `src/probe_extraction/`
+because `scripts/01_extract.py` dispatches to them.
+
+## Pipeline
+
+Stages run in number order, `scripts/01_extract.py` through
+`scripts/10_make_figures.py`, with nothing skipped.
 
 ## Approach
 

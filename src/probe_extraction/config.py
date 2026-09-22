@@ -42,7 +42,7 @@ class ModelConfig(BaseModel):
     # Hybrid-thinking models (the Qwen3.x family) expose this through their chat
     # template: False suppresses the <think>...</think> block, True requests it.
     # It MUST be True for any reasoning-trace experiment on such a model --
-    # otherwise there is no trace to attribute and Stage 7 silently finds
+    # otherwise there is no trace to attribute and Stage 5 silently finds
     # nothing. Models that always reason (DeepSeek-R1 distills) ignore the
     # kwarg, so the default of False leaves their behaviour unchanged.
     enable_thinking: bool = False

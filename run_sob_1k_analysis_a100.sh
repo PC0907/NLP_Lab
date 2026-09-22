@@ -15,7 +15,7 @@
 # Sizing note: LODO cost grows with the SQUARE of the corpus (one probe fit per
 # held-out document, each fit over all the others). 300 docs took ~25 min at 16
 # cores for Stage 6; 1,000 docs is roughly an order of magnitude more work, so
-# this asks for 32 cores and 8 hours. Stage 8's controls are restricted to the
+# this asks for 32 cores and 8 hours. Stage 6's controls are restricted to the
 # peak layer to keep that in budget -- the 4-layer robustness sweep already
 # exists from the 300-doc run.
 
@@ -52,17 +52,17 @@ echo ""
 # rigorous -- it removes the post-hoc layer-selection criticism. The 4-layer
 # robustness sweep already exists at 300 docs and stays in the paper.
 echo "=== STAGE 07: Field-localized attribution LODO (pre-committed layers) ==="
-python scripts/07_reasoning_attribution_lodo.py --config "$CFG" \
+python scripts/05_reasoning_attribution_lodo.py --config "$CFG" \
     --layers 19 23 --jobs -1
 
 echo ""
 echo "=== STAGE 08: Controls (localization, Holm, bootstrap, mentions) ==="
-python scripts/08_attribution_controls.py --config "$CFG" \
+python scripts/06_attribution_controls.py --config "$CFG" \
     --layers 19 --jobs -1 --shuffle-reps 3 --bootstrap 2000
 
 echo ""
 echo "=== STAGE 09: Selective regeneration cost-quality ==="
-python scripts/09_selective_regeneration_sob.py --config "$CFG" \
+python scripts/07_selective_regeneration_sob.py --config "$CFG" \
     --layer 19 --fused-variant fused_both --jobs -1
 
 echo ""

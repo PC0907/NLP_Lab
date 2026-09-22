@@ -44,13 +44,13 @@ echo ""
 echo "=== STAGE 07 (incl. fused_decomposed), layers 19 + 23 ==="
 # Written to a new file so the existing reasoning_attribution_lodo.json, which
 # the current Update_07 numbers came from, stays intact for comparison.
-python scripts/07_reasoning_attribution_lodo.py --config "$CFG" \
+python scripts/05_reasoning_attribution_lodo.py --config "$CFG" \
     --layers 19 23 --jobs -1 \
     --out-name reasoning_attribution_lodo_final.json
 
 echo ""
 echo "=== STAGE 09 rescored with fused_decomposed ==="
-python scripts/09_selective_regeneration_sob.py --config "$CFG" \
+python scripts/07_selective_regeneration_sob.py --config "$CFG" \
     --layer 19 --fused-variant fused_decomposed --jobs -1 \
     --out-name selective_regeneration_final.json
 

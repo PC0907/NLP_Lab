@@ -41,7 +41,7 @@ hostname; nproc
 
 echo ""
 echo "=== STAGE 07: answer + fused_decomposed, layers 19 + 23 ==="
-python scripts/07_reasoning_attribution_lodo.py --config "$CFG" \
+python scripts/05_reasoning_attribution_lodo.py --config "$CFG" \
     --layers 19 23 --jobs -1 \
     --variants fused_decomposed \
     --out-name reasoning_attribution_decomposed.json

@@ -1,6 +1,6 @@
 """Read and write a single leaf of a parsed JSON document by its path.
 
-Stage 12 builds a "hybrid" record: the original extraction everywhere, with the
+Stage 9 builds a "hybrid" record: the original extraction everywhere, with the
 flagged fields -- and only those -- replaced by the regenerated values. That
 needs exact addressing of one leaf at a time, using the same `path` lists the
 extraction metadata already stores (e.g. ["actress", "name"] or
@@ -63,7 +63,7 @@ def json_set(obj: Any, path: Path, value: Any) -> bool:
     """Set `path` to `value` in `obj`, in place. Returns False and changes
     nothing if the path does not already exist.
 
-    Refusing to create missing paths is deliberate. Stage 12 replaces fields the
+    Refusing to create missing paths is deliberate. Stage 9 replaces fields the
     original extraction actually produced; inventing a new key would fabricate a
     field the model never emitted, which is exactly what this analysis must not
     do.

@@ -1,7 +1,7 @@
 """Tests for resume + shard selection (probe_extraction.utils.resume).
 
 These exist because the scaled SOB extraction is long enough to hit a SLURM
-time limit. If `--resume` wrongly judges a document to be complete, Stage 7
+time limit. If `--resume` wrongly judges a document to be complete, Stage 5
 silently drops it for lack of a .rtokens.json sidecar and the corpus quietly
 shrinks -- an error that would only surface as a puzzling document count much
 later, after the GPU time is already spent.
