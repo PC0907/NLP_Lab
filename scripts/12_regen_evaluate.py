@@ -35,9 +35,13 @@ selected budgets jointly (all flagged fields swapped together, one re-labeling)
 and reports the discrepancy. Budget 1.0 is always checked, since regenerating
 everything is the most interaction-heavy case there is.
 
-TWO REGENERATION STRATEGIES, both free from the same Stage 11 run:
-    first   use the first usable resample -- the honest k=1 deployment cost
-    vote    majority value across the usable resamples (self-consistency)
+THREE REGENERATION STRATEGIES, all free from the same Stage 11 run:
+    first        the first usable resample -- the honest k=1 deployment cost
+    vote         plurality value across the usable resamples (self-consistency)
+    vote_strict  the same, but only where the resamples AGREE (>=2 and a strict
+                 majority); otherwise the field is left alone. A resample that
+                 disagrees with itself is a poor reason to overwrite an answer
+                 that may well have been right.
 
 CONTROLS reported alongside:
     * the full resample's own error rate, with no probe involved -- if plain
@@ -95,6 +99,9 @@ def _load_by_path(name: str, rel: str):
 # Stage 9 owns the flagging rules; reusing them (rather than reimplementing)
 # is what makes the measured curve comparable to the simulated one.
 s9 = _load_by_path("stage09", "scripts/09_selective_regeneration_sob.py")
+# Stage 8 owns the multiple-comparison correction, so the regeneration results
+# are corrected exactly the way the AUROC results were.
+s8 = _load_by_path("stage08", "scripts/08_attribution_controls.py")
 
 
 def _stage02():
@@ -108,7 +115,7 @@ def _stage02():
     """
     return _load_by_path("stage02", "scripts/02_label.py")
 
-STRATEGIES = ("first", "vote")
+STRATEGIES = ("first", "vote", "vote_strict")
 SIGNALS = ("probe_fused", "probe_answer", "min_logprob", "mean_logprob",
            "random", "oracle")
 
@@ -135,6 +142,12 @@ def parse_args() -> argparse.Namespace:
                         "silently report a number computed on a subset.")
     p.add_argument("--limit-docs", type=int, default=None,
                    help="Cap on documents (debug aid).")
+    p.add_argument("--bootstrap", type=int, default=2000,
+                   help="Document-level bootstrap replicates for the confidence "
+                        "intervals (0 disables).")
+    p.add_argument("--significance-budgets", type=float, nargs="*",
+                   default=[0.10, 0.20],
+                   help="Budgets at which to test whether the improvement is real.")
     p.add_argument("--jobs", type=int, default=1)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out-name", default="regen_evaluation.json")
@@ -189,6 +202,97 @@ def measured_curve(scores: np.ndarray, y: np.ndarray, doc_ids: np.ndarray,
     order = np.argsort(cov)
     aurc = float(s9._trapezoid(risk[order], cov[order])) if len(order) > 1 else None
     return {"rows": rows, "aurc": aurc}
+
+
+# ---------------------------------------------------------------------------
+# Is the improvement real?
+# ---------------------------------------------------------------------------
+
+def _boot_summary(samples: np.ndarray) -> dict:
+    """Percentile CI and a two-sided bootstrap p-value for one quantity."""
+    a = np.asarray(samples, dtype=np.float64)
+    p = 2.0 * min(float((a <= 0).mean()), float((a >= 0).mean()))
+    return {"mean": float(a.mean()),
+            "ci_low": float(np.percentile(a, 2.5)),
+            "ci_high": float(np.percentile(a, 97.5)),
+            "p_value": float(min(1.0, p))}
+
+
+def bootstrap_significance(y, doc_ids, net_delta, signals, sig_names,
+                           budget, regime, *, n_boot, seed, ref="probe_fused"):
+    """Document-level bootstrap over the MEASURED outcomes.
+
+    The error-rate reduction is a few dozen fields out of five thousand, so a
+    point estimate alone says nothing about whether it would survive a different
+    sample of documents. Documents are the unit of independence -- fields within
+    one document share a trace, a schema and a gold record -- so whole documents
+    are resampled with replacement, never individual fields.
+
+    Every comparison is PAIRED: within one replicate, all signals are evaluated
+    on the same resampled corpus, and the difference is taken there. That
+    removes the between-replicate variance that would otherwise swamp a
+    difference this small.
+
+    Flags are recomputed inside each replicate for the global regime, because a
+    global budget is defined over whatever corpus you have. Per-document
+    flagging does not depend on the rest of the corpus, so it is computed once
+    and reused -- the same masks, not an approximation of them.
+    """
+    rng = np.random.default_rng(seed)
+    uniq = np.unique(doc_ids)
+    rows_by_doc = [np.flatnonzero(doc_ids == d) for d in uniq]
+    n_docs = len(rows_by_doc)
+    # One fixed tie-break vector, so ties resolve the same way in every
+    # replicate and the comparison stays paired.
+    tie = rng.random(len(y))
+
+    per_doc_flag = {}
+    if regime == "per_doc":
+        for s in sig_names:
+            per_doc_flag[s] = s9._flag_per_doc(signals[s], doc_ids, budget,
+                                               np.random.default_rng(seed))
+
+    reduction, rates = [], {s: [] for s in sig_names}
+    diffs = {s: [] for s in sig_names if s != ref}
+    for _ in range(n_boot):
+        pick = rng.integers(0, n_docs, n_docs)
+        idx = np.concatenate([rows_by_doc[p] for p in pick])
+        yb, ndb = y[idx], net_delta[idx]
+        n_b = len(idx)
+        base_errors = int(yb.sum())
+        r = {}
+        for s in sig_names:
+            if regime == "per_doc":
+                fl = per_doc_flag[s][idx]
+            else:
+                k = int(round(budget * n_b))
+                fl = np.zeros(n_b, dtype=bool)
+                if k > 0:
+                    order = np.lexsort((tie[idx], -signals[s][idx]))
+                    fl[order[:k]] = True
+            r[s] = (base_errors + int(ndb[fl].sum())) / n_b
+            rates[s].append(r[s])
+        reduction.append(base_errors / n_b - r[ref])
+        for s in diffs:
+            # Positive means the reference signal left FEWER errors behind.
+            diffs[s].append(r[s] - r[ref])
+
+    tests = {"reduction_vs_baseline": _boot_summary(reduction)}
+    for s in diffs:
+        tests[f"{ref}_vs_{s}"] = _boot_summary(diffs[s])
+    holm = s8.holm_bonferroni({k: v["p_value"] for k, v in tests.items()})
+    for k, v in tests.items():
+        v["p_holm"] = holm.get(k)
+
+    return {
+        "budget": budget, "regime": regime, "n_boot": n_boot, "reference": ref,
+        "per_signal_error_rate": {
+            s: {"mean": float(np.mean(v)),
+                "ci_low": float(np.percentile(v, 2.5)),
+                "ci_high": float(np.percentile(v, 97.5))}
+            for s, v in rates.items()},
+        "tests": tests,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -441,7 +545,8 @@ def main() -> int:
                 status[i] = rec["status"]
 
         status_counts = {s: int((status == s).sum()) for s in
-                         ("swapped", "identical", "unavailable", "set_failed")}
+                         ("swapped", "identical", "unavailable", "set_failed",
+                          "label_failed")}
         outcome_counts = {o: int((self_out == o).sum()) for o in
                           ("repaired", "damaged", "unchanged", "unavailable", "lost")}
         avail = self_out != "unavailable"
@@ -454,6 +559,17 @@ def main() -> int:
             "n_available_correct": n_avail_ok,
         }
         logger.info("Field availability: %s", status_counts)
+        if status_counts["label_failed"]:
+            kinds: dict[str, int] = {}
+            for res in by_doc.values():
+                for rec in res["fields"]:
+                    if rec["status"] == "label_failed":
+                        kinds[rec.get("error", "?")] = kinds.get(rec.get("error", "?"), 0) + 1
+            logger.warning(
+                "%d of %d fields could not be re-labeled after the swap (%s). "
+                "They are excluded from the repair/damage denominators, so this "
+                "is lost coverage -- report it rather than ignoring it.",
+                status_counts["label_failed"], n, kinds)
         logger.info("Swap outcomes (all scored fields): %s", outcome_counts)
         logger.info("MEASURED repair rate %.3f (of %d available errors); "
                     "MEASURED damage rate %.3f (of %d available correct fields). "
@@ -482,8 +598,18 @@ def main() -> int:
         # Joint validation of the additive shortcut.
         validation = []
         for name in ck_names:
-            actual = sum(res.get("joint", {}).get(name, {}).get("errors", res["base_errors"])
-                         for res in by_doc.values())
+            actual, n_skipped = 0, 0
+            for res in by_doc.values():
+                entry = res.get("joint", {}).get(name)
+                # `errors` is explicitly None when that document's joint
+                # re-labeling failed -- a missing key and a null are different
+                # things here, and dict.get's default would not catch the null.
+                if entry is None or entry.get("errors") is None:
+                    actual += res["base_errors"]
+                    if entry is not None:
+                        n_skipped += 1
+                else:
+                    actual += entry["errors"]
             b = float(name.rsplit("@", 1)[1])
             mask = s9._flag_global(signals[args.checkpoint_signal], b,
                                    np.random.default_rng(args.seed))
@@ -493,25 +619,28 @@ def main() -> int:
                 "additive_prediction": pred, "joint_actual": int(actual),
                 "difference": int(actual) - pred,
                 "difference_rate_points": (int(actual) - pred) / n,
+                "n_documents_skipped": n_skipped,
             })
         if validation:
             logger.info("-" * 70)
             logger.info("Additivity check (joint re-labeling vs the per-field sum):")
             for v in validation:
+                note = (f"  [{v['n_documents_skipped']} docs unlabelable]"
+                        if v["n_documents_skipped"] else "")
                 logger.info("  %-22s predicted %5d errors, joint gives %5d "
-                            "(%+d, %+.2f pts)", v["checkpoint"],
+                            "(%+d, %+.2f pts)%s", v["checkpoint"],
                             v["additive_prediction"], v["joint_actual"],
-                            v["difference"], 100 * v["difference_rate_points"])
+                            v["difference"], 100 * v["difference_rate_points"], note)
 
         # Control: what plain resampling is worth with no probe at all. Uses
         # the first usable sample as a whole record -- no selection, no swap.
-        full_err, full_scored, full_missing = 0, 0, 0
+        full_err, full_scored, full_missing, full_failed = 0, 0, 0, 0
         for doc_id in doc_order:
             samples = sample_sets[doc_id]
             before = {ps: y0 for ps, _p, y0, _sc in scored[doc_id]}
+            full_scored += len(before)
             if not samples:
                 full_err += sum(before.values())
-                full_scored += len(before)
                 full_missing += len(before)
                 continue
             labeler = make_labeler(
@@ -520,17 +649,29 @@ def main() -> int:
                 fuzzy_threshold=cfg.labeling.fuzzy_threshold,
                 number_tolerance=cfg.labeling.number_tolerance,
                 mode_params=mode_params)
-            after = labeler(samples[0])
+            try:
+                after = labeler(samples[0])
+            except Exception as e:
+                # A whole regenerated record can nest deeper than the matcher can
+                # walk. This is a CONTROL, not the measurement -- it must not take
+                # the run down with it. The document keeps its original labels and
+                # the loss of coverage is reported.
+                logger.debug("control labeling failed for %s: %s", doc_id, e)
+                full_err += sum(before.values())
+                full_failed += 1
+                continue
             full_err += errors_over_scored(after, before)
-            full_scored += len(before)
             full_missing += sum(1 for ps in before if ps not in after)
         control_full = {
             "error_rate": full_err / full_scored if full_scored else None,
             "n_scored_paths_missing_from_resample": full_missing,
+            "n_documents_unlabelable": full_failed,
         }
         logger.info("CONTROL -- replacing the whole record with the resample "
-                    "(no probe): error rate %.1f%% vs %.1f%% for the original.",
-                    100 * (control_full["error_rate"] or 0), 100 * base_errors / n)
+                    "(no probe): error rate %.1f%% vs %.1f%% for the original.%s",
+                    100 * (control_full["error_rate"] or 0), 100 * base_errors / n,
+                    f"  [{full_failed} documents unlabelable, kept as-is]"
+                    if full_failed else "")
 
         def at(regime, sig, b=0.20):
             for r in curves[regime][sig]["rows"]:
@@ -570,7 +711,45 @@ def main() -> int:
                         h["probe_fused_repaired"], h["probe_fused_damaged"],
                         h["best_logprob_baseline"], 100 * h["logprob_error_rate"])
 
+        # Is the improvement real, or a few dozen fields of luck?
+        significance = []
+        if args.bootstrap > 0:
+            boot_signals = [s for s in ("probe_fused", "probe_answer",
+                                        "min_logprob", "mean_logprob")
+                            if s in signals]
+            if "probe_fused" in boot_signals:
+                logger.info("-" * 70)
+                logger.info("SIGNIFICANCE (%d document-level bootstrap replicates, "
+                            "paired, Holm-corrected within each budget/regime):",
+                            args.bootstrap)
+                for regime in ("global", "per_doc"):
+                    for b in args.significance_budgets:
+                        sg = bootstrap_significance(
+                            y, doc_ids, net_delta, signals, boot_signals,
+                            b, regime, n_boot=args.bootstrap, seed=args.seed)
+                        significance.append(sg)
+                        red = sg["tests"]["reduction_vs_baseline"]
+                        logger.info(
+                            "  %-8s @%3.0f%%  error rate %.1f%% -> %.1f%%  "
+                            "(reduction %+.2f pts, 95%% CI [%+.2f, %+.2f], "
+                            "p=%.4g, Holm %.4g)%s",
+                            regime, 100 * b, 100 * base_errors / n,
+                            100 * sg["per_signal_error_rate"]["probe_fused"]["mean"],
+                            100 * red["mean"], 100 * red["ci_low"],
+                            100 * red["ci_high"], red["p_value"], red["p_holm"],
+                            "" if red["ci_low"] > 0 else "   <-- CI includes zero")
+                        for k, v in sg["tests"].items():
+                            if k == "reduction_vs_baseline":
+                                continue
+                            logger.info(
+                                "             %-28s %+.2f pts [%+.2f, %+.2f] "
+                                "p=%.4g Holm %.4g%s", k.replace("probe_fused_vs_", "vs "),
+                                100 * v["mean"], 100 * v["ci_low"], 100 * v["ci_high"],
+                                v["p_value"], v["p_holm"],
+                                "" if v["ci_low"] > 0 else "   (ns)")
+
         per_strategy[strategy] = {
+            "significance": significance,
             "status_counts": status_counts,
             "outcome_counts": outcome_counts,
             "measured_rates": measured,

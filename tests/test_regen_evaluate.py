@@ -398,3 +398,265 @@ def test_per_doc_regime_spends_inside_each_document():
     assert row["n_flagged"] == 2
     assert row["outcomes"]["repaired"] == 2
     assert row["final_errors"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Surviving a hostile document
+# ---------------------------------------------------------------------------
+
+def test_the_recursion_limit_is_raised_by_importing_the_module():
+    """The matcher recurses through nested records, and SOB nests deep enough to
+    pass CPython's default 1,000 frames. The limit MUST be raised by importing
+    this module, not by the calling script: the per-document pass runs in joblib
+    worker processes, which are fresh interpreters that inherit nothing from the
+    parent. Setting it only in the script left every worker at 1,000 and killed
+    a completed 13-hour regeneration run at the evaluation step."""
+    import sys
+    assert sys.getrecursionlimit() >= rg.RECURSION_LIMIT
+
+
+def test_an_unlabelable_swap_is_recorded_not_raised():
+    """A single pathological hybrid must not destroy a run that has already paid
+    for its GPU time."""
+    def exploding_labeler(record):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    original = {"a": "wrong"}
+    out = rg.evaluate_document(original, [("a", ["a"], 1)], [{"a": "other"}],
+                               "first", exploding_labeler)
+    rec = out["fields"][0]
+    assert rec["status"] == "label_failed"
+    assert rec["error"] == "RecursionError"
+    assert rec["net_delta"] == 0
+
+
+def test_an_unlabelable_swap_is_excluded_from_the_measured_rates():
+    """It counts as unavailable, so it leaves the repair/damage denominators
+    rather than inflating them with a field nothing was learned about."""
+    def exploding_labeler(record):
+        raise ValueError("boom")
+
+    out = rg.evaluate_document({"a": "wrong"}, [("a", ["a"], 1)],
+                               [{"a": "other"}], "first", exploding_labeler)
+    assert out["fields"][0]["self"] == "unavailable"
+
+
+def test_other_fields_are_still_measured_after_one_fails():
+    calls = []
+
+    def flaky_labeler(record):
+        calls.append(record)
+        if record.get("a") == "poison":
+            raise RecursionError("nope")
+        return {"a": 1, "b": 0}
+
+    original = {"a": "wrong", "b": "wrong_b"}
+    out = rg.evaluate_document(
+        original,
+        [("a", ["a"], 1), ("b", ["b"], 1)],
+        [{"a": "poison", "b": "fixed"}],
+        "first", flaky_labeler)
+    assert out["fields"][0]["status"] == "label_failed"
+    assert out["fields"][1]["status"] == "swapped"
+    assert out["fields"][1]["self"] == "repaired"
+
+
+def test_a_failed_joint_checkpoint_reports_null_rather_than_a_number():
+    """The joint pass is a CHECK on the measurement. A failure there must be
+    visibly absent, never silently folded in as a real error count."""
+    def exploding_labeler(record):
+        raise RecursionError("nope")
+
+    out = rg.evaluate_document({"a": "wrong"}, [("a", ["a"], 1)],
+                               [{"a": "other"}], "first", exploding_labeler,
+                               joint_sets={"ck": ["a"]})
+    # The field never got swapped, so the joint set has nothing to apply.
+    assert out["joint"]["ck"]["errors"] == 1
+
+
+def test_a_joint_checkpoint_that_fails_mid_labeling_is_marked_null():
+    calls = []
+
+    def labeler(record):
+        calls.append(record)
+        if len(calls) > 1:          # per-field pass succeeds, joint pass fails
+            raise RecursionError("nope")
+        return {"a": 0}
+
+    out = rg.evaluate_document({"a": "wrong"}, [("a", ["a"], 1)],
+                               [{"a": "fixed"}], "first", labeler,
+                               joint_sets={"ck": ["a"]})
+    assert out["fields"][0]["self"] == "repaired"
+    assert out["joint"]["ck"]["errors"] is None
+    assert out["joint"]["ck"]["error"] == "RecursionError"
+
+
+def test_a_fresh_interpreter_gets_the_limit_just_by_importing_the_module():
+    """The real regression. joblib workers are fresh interpreters that inherit
+    nothing from the parent, and they reach this code by importing the module to
+    unpickle `measure_document`. So the import alone must be enough -- verified
+    here in a genuinely separate process, because an in-process assertion would
+    pass even if the limit were only ever set by the parent."""
+    import os
+    import subprocess
+    import sys as _sys
+
+    env = dict(os.environ)
+    src = str(_ROOT / "src")
+    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(
+        [_sys.executable, "-c",
+         "import sys, probe_extraction.regen.evaluate as e; "
+         "print(sys.getrecursionlimit(), e.RECURSION_LIMIT)"],
+        capture_output=True, text=True, env=env, cwd=str(_ROOT))
+    assert proc.returncode == 0, proc.stderr
+    got, want = (int(x) for x in proc.stdout.split())
+    assert got >= want
+
+
+# ---------------------------------------------------------------------------
+# vote_strict: only overwrite on consensus
+# ---------------------------------------------------------------------------
+
+def test_vote_strict_swaps_when_the_resamples_agree():
+    samples = [{"a": "x"}, {"a": "y"}, {"a": "y"}]
+    assert rg.select_value(samples, ["a"], "vote_strict") == (True, "y")
+
+
+def test_vote_strict_declines_when_every_resample_disagrees():
+    """Three different answers is not evidence for any of them. Plain `vote`
+    would still pick one and overwrite a field that may have been right."""
+    samples = [{"a": "x"}, {"a": "y"}, {"a": "z"}]
+    assert rg.select_value(samples, ["a"], "vote") == (True, "x")
+    assert rg.select_value(samples, ["a"], "vote_strict") == (False, None)
+
+
+def test_vote_strict_requires_a_strict_majority_not_just_a_plurality():
+    samples = [{"a": "x"}, {"a": "x"}, {"a": "y"}, {"a": "y"}]
+    assert rg.select_value(samples, ["a"], "vote_strict") == (False, None)
+
+
+def test_vote_strict_needs_two_agreeing_samples_not_one_unopposed():
+    """A single usable resample cannot form a consensus with itself."""
+    samples = [{"a": "x"}]
+    assert rg.select_value(samples, ["a"], "vote") == (True, "x")
+    assert rg.select_value(samples, ["a"], "vote_strict") == (False, None)
+
+
+def test_vote_strict_counts_only_samples_that_have_the_field():
+    """Two of three agree, the third never mentioned the field -- that is a
+    consensus among those that answered."""
+    samples = [{"b": 1}, {"a": "y"}, {"a": "y"}]
+    assert rg.select_value(samples, ["a"], "vote_strict") == (True, "y")
+
+
+def test_vote_strict_leaves_the_field_untouched_when_it_declines():
+    original = {"a": "wrong"}
+    paths, gold = {"a": ["a"]}, {"a": "right"}
+    out = rg.evaluate_document(
+        original, [("a", ["a"], 1)],
+        [{"a": "p"}, {"a": "q"}, {"a": "r"}],
+        "vote_strict", _labeler_from(gold, paths))
+    assert out["fields"][0]["status"] == "unavailable"
+    assert out["fields"][0]["net_delta"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Is the improvement real?
+# ---------------------------------------------------------------------------
+
+def _boot_inputs(n_docs=60, fields_per_doc=5, seed=0):
+    """A corpus where probe_fused is genuinely better than min_logprob."""
+    rng = np.random.default_rng(seed)
+    n = n_docs * fields_per_doc
+    y = rng.integers(0, 2, n)
+    doc_ids = np.repeat(np.arange(n_docs), fields_per_doc)
+    # Errors get high probe scores; log-probs are noisier about it.
+    fused = y + rng.normal(0, 0.3, n)
+    lp = y + rng.normal(0, 1.2, n)
+    # Every flagged error is repaired, nothing is damaged.
+    net_delta = -y
+    signals = {"probe_fused": fused, "probe_answer": fused - rng.normal(0, .05, n),
+               "min_logprob": lp, "mean_logprob": lp + rng.normal(0, .05, n)}
+    return y, doc_ids, net_delta.astype(np.int64), signals
+
+
+def test_a_real_improvement_gets_a_ci_that_excludes_zero():
+    y, doc_ids, net_delta, signals = _boot_inputs()
+    out = s12.bootstrap_significance(
+        y, doc_ids, net_delta, signals,
+        ["probe_fused", "probe_answer", "min_logprob", "mean_logprob"],
+        0.20, "global", n_boot=300, seed=0)
+    red = out["tests"]["reduction_vs_baseline"]
+    assert red["mean"] > 0
+    assert red["ci_low"] > 0
+    assert red["p_value"] < 0.05
+
+
+def test_no_improvement_gives_a_ci_that_contains_zero():
+    """With a repair operator that does nothing, the measured reduction must not
+    come out significant -- otherwise the test would manufacture results."""
+    y, doc_ids, _nd, signals = _boot_inputs()
+    net_delta = np.zeros(len(y), dtype=np.int64)
+    out = s12.bootstrap_significance(
+        y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
+        0.20, "global", n_boot=300, seed=0)
+    red = out["tests"]["reduction_vs_baseline"]
+    assert red["mean"] == pytest.approx(0.0, abs=1e-12)
+    assert red["ci_low"] <= 0 <= red["ci_high"]
+    assert red["p_value"] > 0.05
+
+
+def test_the_better_signal_beats_the_worse_one():
+    y, doc_ids, net_delta, signals = _boot_inputs()
+    out = s12.bootstrap_significance(
+        y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
+        0.20, "global", n_boot=300, seed=0)
+    vs = out["tests"]["probe_fused_vs_min_logprob"]
+    assert vs["mean"] > 0        # the baseline leaves MORE errors behind
+    assert vs["ci_low"] > 0
+
+
+def test_comparisons_are_paired_within_a_replicate():
+    """An unpaired test would compare two independently resampled corpora and
+    drown a difference this small in between-corpus variance."""
+    y, doc_ids, net_delta, signals = _boot_inputs()
+    out = s12.bootstrap_significance(
+        y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
+        0.20, "global", n_boot=400, seed=0)
+    vs = out["tests"]["probe_fused_vs_min_logprob"]
+    spread = vs["ci_high"] - vs["ci_low"]
+    rates = out["per_signal_error_rate"]
+    # The paired difference must be tighter than either signal's own interval.
+    own = rates["probe_fused"]["ci_high"] - rates["probe_fused"]["ci_low"]
+    assert spread < own
+
+
+def test_every_test_carries_a_holm_adjusted_p_value():
+    y, doc_ids, net_delta, signals = _boot_inputs()
+    out = s12.bootstrap_significance(
+        y, doc_ids, net_delta, signals,
+        ["probe_fused", "probe_answer", "min_logprob", "mean_logprob"],
+        0.20, "global", n_boot=200, seed=0)
+    for name, t in out["tests"].items():
+        assert t["p_holm"] is not None, name
+        assert t["p_holm"] >= t["p_value"] - 1e-12, name
+
+
+def test_the_per_doc_regime_also_produces_intervals():
+    y, doc_ids, net_delta, signals = _boot_inputs()
+    out = s12.bootstrap_significance(
+        y, doc_ids, net_delta, signals, ["probe_fused", "min_logprob"],
+        0.20, "per_doc", n_boot=200, seed=0)
+    assert out["regime"] == "per_doc"
+    assert out["tests"]["reduction_vs_baseline"]["ci_low"] > 0
+
+
+def test_the_bootstrap_is_reproducible_from_its_seed():
+    y, doc_ids, net_delta, signals = _boot_inputs()
+    kw = dict(n_boot=200, seed=7)
+    a = s12.bootstrap_significance(y, doc_ids, net_delta, signals,
+                                   ["probe_fused", "min_logprob"], 0.2, "global", **kw)
+    b = s12.bootstrap_significance(y, doc_ids, net_delta, signals,
+                                   ["probe_fused", "min_logprob"], 0.2, "global", **kw)
+    assert a["tests"] == b["tests"]

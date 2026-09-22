@@ -47,8 +47,17 @@ hostname; nproc
 echo "regenerated documents: $(ls ${ART}/regen/*.json 2>/dev/null | wc -l)"
 
 echo ""
-echo "=== STAGE 09: simulated curves + per-field OOF score dump ==="
-python scripts/09_selective_regeneration_sob.py --config "$CFG" --layer 19 --jobs -1
+# Stage 9's LODO sweep is ~20 min and depends only on the activations and
+# labels, not on the regeneration. Re-running it after a Stage 12 fix would
+# recompute identical numbers, so skip it when the dump is already there.
+# Delete the file to force a fresh sweep.
+if [ -f "${RES}/oof_field_scores.json" ]; then
+  echo "=== STAGE 09: skipped, ${RES}/oof_field_scores.json already exists ==="
+  echo "    (delete that file to force a re-run)"
+else
+  echo "=== STAGE 09: simulated curves + per-field OOF score dump ==="
+  python scripts/09_selective_regeneration_sob.py --config "$CFG" --layer 19 --jobs -1
+fi
 
 echo ""
 echo "=== STAGE 12: MEASURED repair and damage ==="
@@ -91,6 +100,21 @@ for name, st in mea["strategies"].items():
     worst = max((abs(v["difference_rate_points"]) for v in st["additivity_check"]),
                 default=0.0)
     print(f"  additivity check: worst drift {100*worst:.2f} percentage points")
+    for sg in st.get("significance", []):
+        red = sg["tests"]["reduction_vs_baseline"]
+        star = "SIGNIFICANT" if red["ci_low"] > 0 else "not significant"
+        print(f"  {sg['regime']:<8} @{100*sg['budget']:.0f}%: reduction "
+              f"{100*red['mean']:+.2f} pts, 95% CI "
+              f"[{100*red['ci_low']:+.2f}, {100*red['ci_high']:+.2f}], "
+              f"Holm p={red['p_holm']:.4g}  -- {star}")
+        for k, v in sg["tests"].items():
+            if k == "reduction_vs_baseline":
+                continue
+            mark = "sig" if v["ci_low"] > 0 else "ns "
+            print(f"             {k.replace('probe_fused_vs_', 'vs '):<16} "
+                  f"{100*v['mean']:+.2f} pts "
+                  f"[{100*v['ci_low']:+.2f}, {100*v['ci_high']:+.2f}] "
+                  f"Holm p={v['p_holm']:.4g}  {mark}")
 
 # The simulated curve is kept alongside so the paper can say exactly how far
 # the invented parameters were off. Printing it is a convenience, not a result,

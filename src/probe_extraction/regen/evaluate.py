@@ -29,12 +29,28 @@ The outcome vocabulary, used everywhere downstream:
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any, Callable, Sequence
 
 from probe_extraction.labeling.matcher import label_extraction
 from probe_extraction.utils.jsonpath import json_get, with_replacements
 
 Labeler = Callable[[Any], dict[str, int]]
+
+# The matcher walks gold and extracted in parallel by recursion, and SOB records
+# nest deeply enough to blow CPython's default 1,000-frame limit -- Stage 2
+# raises it for the same reason.
+#
+# It is set HERE, at module scope, and not only in the calling script, because
+# the per-document pass runs in joblib worker processes. Those are fresh
+# interpreters: they do not inherit the parent's recursion limit, so a limit set
+# in the script applies to the parent alone and every worker still runs at 1,000.
+# A worker must import this module to unpickle `measure_document`, so setting it
+# here guarantees the limit is in place before any labeling happens, in whatever
+# process does it.
+RECURSION_LIMIT = 20000
+if sys.getrecursionlimit() < RECURSION_LIMIT:
+    sys.setrecursionlimit(RECURSION_LIMIT)
 
 
 # ---------------------------------------------------------------------------
@@ -74,25 +90,35 @@ def select_value(samples: Sequence[Any], path: Sequence,
                  strategy: str) -> tuple[bool, Any]:
     """What the regeneration offers for one field, under one strategy.
 
-    `first`  the first usable resample -- the honest k=1 deployment cost.
-    `vote`   the majority value across usable resamples (self-consistency).
+    `first`        the first usable resample -- the honest k=1 deployment cost.
+    `vote`         the plurality value across usable resamples (self-consistency).
+    `vote_strict`  the same, but only when the resamples actually AGREE: at
+                   least two of them, and a strict majority. Otherwise the field
+                   is left alone.
 
     `first` fixes the sample and then reads the path: if that one resample has
     nothing there, the field is unavailable. It must not fall through to a
     later sample, or `first` would quietly become best-of-k and overstate what a
     single regeneration call buys.
+
+    `vote_strict` exists because a resample that disagrees with itself is a poor
+    reason to overwrite an answer that may well have been right. Requiring
+    consensus spends less of the budget but should break fewer correct fields --
+    whether it actually does is measured, not assumed.
     """
     if not samples:
         return False, None
     if strategy == "first":
         return json_get(samples[0], path)
-    if strategy == "vote":
+    if strategy in ("vote", "vote_strict"):
         counts: dict[str, int] = {}
         seen: dict[str, tuple[int, Any]] = {}
+        n_present = 0
         for s in samples:
             ok, v = json_get(s, path)
             if not ok:
                 continue
+            n_present += 1
             # Values can be unhashable (lists, dicts), so vote on a canonical
             # serialization rather than the value itself.
             k = json.dumps(v, sort_keys=True, default=str)
@@ -103,6 +129,12 @@ def select_value(samples: Sequence[Any], path: Sequence,
         # Most votes; ties go to whichever value appeared first, so the result
         # does not depend on dict iteration order.
         best = min(counts, key=lambda k: (-counts[k], seen[k][0]))
+        if strategy == "vote_strict":
+            # Two agreeing samples minimum, and a strict majority of those that
+            # had anything to say. A lone sample can never form a consensus, so
+            # it is left alone rather than treated as unanimous.
+            if counts[best] < 2 or counts[best] * 2 <= n_present:
+                return False, None
         return True, seen[best][1]
     raise ValueError(f"unknown strategy: {strategy!r}")
 
@@ -206,7 +238,19 @@ def evaluate_document(original: Any,
             recs.append(rec)
             continue
 
-        after = labeler(hybrid)
+        try:
+            after = labeler(hybrid)
+        except Exception as e:
+            # One unlabelable hybrid must not destroy a run that has already
+            # paid for its GPU time. The field is recorded as unmeasured rather
+            # than silently counted as a no-op, and the caller reports how many
+            # there were -- so this shows up as lost coverage, never as a
+            # flattering zero.
+            rec["status"], rec["self"] = "label_failed", "unavailable"
+            rec["error"] = type(e).__name__
+            recs.append(rec)
+            continue
+
         rec["status"] = "swapped"
         rec["net_delta"] = errors_over_scored(after, before) - base_err
         if ps not in after:
@@ -229,7 +273,15 @@ def evaluate_document(original: Any,
                 joint[name] = {"n_swapped": 0, "errors": base_err}
                 continue
             hybrid, failed = with_replacements(original, repl)
-            after = labeler(hybrid)
+            try:
+                after = labeler(hybrid)
+            except Exception as e:
+                # The joint pass is a CHECK on the per-field measurement, not
+                # the measurement itself, so a failure here is reported and
+                # skipped rather than allowed to fail the run.
+                joint[name] = {"n_swapped": len(repl) - len(failed),
+                               "errors": None, "error": type(e).__name__}
+                continue
             joint[name] = {"n_swapped": len(repl) - len(failed),
                            "errors": errors_over_scored(after, before)}
         out["joint"] = joint
