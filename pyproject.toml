@@ -46,6 +46,7 @@ dev = [
 
 [project.urls]
 Repository = "https://github.com/PC0907/NLP_Lab"
+Documentation = "https://github.com/PC0907/NLP_Lab/tree/main/docs"
 
 # ----------------------------------------------------------------------------
 # setuptools configuration: tell it the package lives in src/

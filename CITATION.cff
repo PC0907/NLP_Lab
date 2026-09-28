@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Probe-Based Trust Signals for Selective Regeneration in Structured Information Extraction"
+type: software
+authors:
+  - family-names: Rizvi
+    given-names: Syed Ali Mehdi
+repository-code: "https://github.com/PC0907/NLP_Lab"
+license: MIT
+version: 0.1.0
+date-released: 2026-09-28
+keywords:
+  - linear probes
+  - interpretability
+  - information extraction
+  - hallucination detection
+  - selective regeneration
