@@ -26,14 +26,14 @@ spent on regeneration, for probe-guided selection versus the baselines.
 
 ```mermaid
 flowchart LR
-    A[PDF / text document] --> B[LLM extraction<br/>JSON per schema]
-    B --> C[Capture hidden states<br/>per generated field]
-    B --> D[Match against gold<br/>per-field labels]
-    C --> E[Linear probe<br/>P&#40;field is wrong&#41;]
+    A["PDF / text document"] --> B["LLM extraction<br/>JSON per schema"]
+    B --> C["Capture hidden states<br/>per generated field"]
+    B --> D["Match against gold<br/>per-field labels"]
+    C --> E["Linear probe<br/>P(field is wrong)"]
     D --> E
-    E --> F[Evaluate vs. baselines<br/>AUROC · nested LODO]
-    E --> G[Selective regeneration<br/>+ safe override]
-    G --> H[Cost–quality curve]
+    E --> F["Evaluate vs. baselines<br/>AUROC · nested LODO"]
+    E --> G["Selective regeneration<br/>+ safe override"]
+    G --> H["Cost–quality curve"]
 ```
 
 1. **Extract.** Run an open-weights LLM over benchmark documents with the target JSON schema in the prompt.
