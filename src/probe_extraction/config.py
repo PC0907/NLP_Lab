@@ -39,6 +39,13 @@ class ModelConfig(BaseModel):
     max_new_tokens: int = 2048
     temperature: float = 0.0
     top_p: float = 1.0
+    # Hybrid-thinking models (the Qwen3.x family) expose this through their chat
+    # template: False suppresses the <think>...</think> block, True requests it.
+    # It MUST be True for any reasoning-trace experiment on such a model --
+    # otherwise there is no trace to attribute and Stage 5 silently finds
+    # nothing. Models that always reason (DeepSeek-R1 distills) ignore the
+    # kwarg, so the default of False leaves their behaviour unchanged.
+    enable_thinking: bool = False
 
 
 class ActivationsConfig(BaseModel):
@@ -62,6 +69,7 @@ class DataConfig(BaseModel):
     domains: list[str] = Field(default_factory=list)
     max_documents: int | None = None
     pdf_extractor: Literal["pymupdf", "docling", "camelot"] = "pymupdf"
+    split: str = "test"   # SOB only: which HF split to load (test/train/validation)
 
 
 class ExtractionConfig(BaseModel):
@@ -78,6 +86,14 @@ class LabelingConfig(BaseModel):
     number_tolerance: float = 0.01
     url_normalize: bool = True
     email_normalize: bool = True
+    # How leaf comparison + schema-shape divergence are handled:
+    #   strict          -> EXACT leaf compare, object-vs-primitive = type_mismatch
+    #   auto            -> type-aware (AUTO) leaf compare, shape still strict
+    #   structure_aware -> AUTO leaf compare AND match flat values against gold
+    #                      object leaves (the DeepSeek-R1 fix)
+    # Default "auto" reproduces the ExtractBench track, whose labels were made
+    # with AUTO leaf comparison. The SOB/DeepSeek configs set this explicitly.
+    match_mode: Literal["strict", "auto", "structure_aware"] = "auto"
 
     @field_validator("fuzzy_threshold", "number_tolerance")
     @classmethod
@@ -94,7 +110,6 @@ class ProbeConfig(BaseModel):
     class_weight: str | None = "balanced"
     test_size: float = 0.2
     cv_folds: int = 5
-
 
 class BaselinesConfig(BaseModel):
     enabled: list[str] = Field(default_factory=list)
