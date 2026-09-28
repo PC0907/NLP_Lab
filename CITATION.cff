@@ -5,6 +5,8 @@ type: software
 authors:
   - family-names: Rizvi
     given-names: Syed Ali Mehdi
+  - family-names: Bhat
+    given-names: Adnan
 repository-code: "https://github.com/PC0907/NLP_Lab"
 license: MIT
 version: 0.1.0

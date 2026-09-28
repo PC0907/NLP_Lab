@@ -27,7 +27,7 @@ thing to intervene with. `--position last` reproduces the old behaviour if you
 want both.
 
 Usage:
-  python experiments/fit_steering_direction.py --config configs/exp_fresh_alltokens.yaml \
+  python experiments/fit_steering_direction.py --config configs/extractbench/exp_fresh_alltokens.yaml \
       --exclude-domains finance/10kq --position mid --out-suffix mid
 """
 from __future__ import annotations

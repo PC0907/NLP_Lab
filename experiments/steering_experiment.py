@@ -39,7 +39,7 @@ One full generation pass per (direction, coefficient). With 20 documents and
 and --max-docs restrict it.
 
 Usage:
-  python experiments/steering_experiment.py --config configs/exp_fresh_alltokens.yaml \
+  python experiments/steering_experiment.py --config configs/extractbench/exp_fresh_alltokens.yaml \
       --probe artifacts/fresh_qwen35_4b_pooled_alltokens/probes/probe_layer18_mid.pkl \
       --layer 18 --exclude-domains finance/10kq \
       --coeffs 0.0 0.1 0.2 0.3 0.4 0.5 -0.1 -0.2 -0.3 -0.4 -0.5
@@ -147,6 +147,7 @@ def main():
     ex = import_module("01_extract")
 
     cfg = load_config(args.config)
+    mode_params = import_module("02_label")._MODE_PARAMS[cfg.labeling.match_mode]
 
     # ---- documents ----
     docs = [d for d in ex.load_benchmark(cfg)
@@ -256,7 +257,7 @@ def main():
                                        "parse_error": parse_error}
                 continue
 
-            # Call copied from 02_label.py:153-161 so scoring is identical to
+            # Same call and match_mode as 02_label.py so scoring is identical to
             # the pipeline's. Any divergence here and the error rates are not
             # comparable to the baseline.
             result = label_extraction(
@@ -267,6 +268,7 @@ def main():
                 extracted=parsed,
                 fuzzy_threshold=cfg.labeling.fuzzy_threshold,
                 number_tolerance=cfg.labeling.number_tolerance,
+                **mode_params,
             )
             labels = result.labels
 

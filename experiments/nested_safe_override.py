@@ -3,7 +3,7 @@
 
 WHAT THIS FIXES
 ---------------
-scripts/safe_override_rescore.py holds out the THRESHOLD (tau is chosen
+scripts/extractbench/safe_override_rescore.py holds out the THRESHOLD (tau is chosen
 leave-one-document-out) but NOT the LAYER, which is a fixed command-line
 argument picked from analyses computed over every document -- including the
 ones subsequently scored. This script nests both.
@@ -63,6 +63,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, "scripts/extractbench")
 from importlib import import_module
 _rs = import_module("rescore_regen")
 strict_ok = _rs.strict_ok

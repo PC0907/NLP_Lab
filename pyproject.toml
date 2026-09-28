@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Syed Ali Mehdi Rizvi", email = "syedalirizvi0907@gmail.com" },
+    { name = "Adnan Bhat", email = "bhat.adnan198@gmail.com" },
 ]
 keywords = [
     "nlp",

@@ -30,7 +30,7 @@ WHAT IT CHECKS
      change is specific to the probe direction.
 
 Usage:
-  python experiments/steering_smoke.py --config configs/exp_fresh_alltokens.yaml \
+  python experiments/steering_smoke.py --config configs/extractbench/exp_fresh_alltokens.yaml \
       --probe artifacts/fresh_qwen35_4b_pooled_alltokens/probes/probe_layer18.pkl \
       --layer 18 --doc-index 24
 """

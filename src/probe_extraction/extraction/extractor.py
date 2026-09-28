@@ -31,6 +31,10 @@ from probe_extraction.extraction.parser import (
     parse_json_output,
 )
 from probe_extraction.extraction.prompts import build_extraction_prompt
+from probe_extraction.extraction.reasoning_trace import (
+    find_reasoning_end_token,
+    reasoning_pooled_vectors,
+)
 from probe_extraction.models.base import LLM
 
 logger = logging.getLogger(__name__)
@@ -96,11 +100,64 @@ class ExtractionResult:
     token_logprobs: list[float] | None
     fields: list[FieldExtraction] = field(default_factory=list)
     captured_layers: list[int] = field(default_factory=list)
+    # Reasoning-trace pooled activations (reasoning models only, e.g.
+    # DeepSeek-R1). Maps pool name -> {layer: (hidden_dim,) vector}, where the
+    # pool is over the <think>...</think> tokens that precede the JSON answer.
+    # Keys: "reasoning_mean" (mean over trace tokens), "reasoning_last" (the
+    # </think> position). Empty for non-reasoning models (no </think>).
+    reasoning_activations: dict[str, dict[int, np.ndarray]] = field(default_factory=dict)
+    # Per-token reasoning-trace hidden states for a configured layer subset,
+    # {layer: (n_reasoning_tokens, hidden_dim)}, plus the matching surface
+    # strings of those tokens. Enables OFFLINE field-localized reasoning
+    # attribution (locate where each field's value is mentioned in the trace,
+    # pool exactly those tokens). Empty unless reasoning_token_layers is set on
+    # the Extractor and a </think> boundary was found.
+    reasoning_token_states: dict[int, np.ndarray] = field(default_factory=dict)
+    reasoning_token_strings: list[str] = field(default_factory=list)
 
     @property
     def is_success(self) -> bool:
         """True if the model produced parseable JSON with at least one field."""
         return self.parse_error is None and len(self.fields) > 0
+
+
+# ============================================================================
+# Prompt construction (shared)
+# ============================================================================
+
+def truncate_document_text(text: str, max_input_chars: int) -> str:
+    """Truncate document text. max_input_chars <= 0 disables truncation."""
+    if max_input_chars <= 0 or len(text) <= max_input_chars:
+        return text
+    truncated = text[:max_input_chars]
+    logger.info(
+        "Truncated document text from %d to %d chars (~%d tokens)",
+        len(text), len(truncated), len(truncated) // 4,
+    )
+    return truncated
+
+
+def build_prompt_for_document(
+    llm: LLM,
+    doc: Document,
+    *,
+    include_schema: bool,
+    max_input_chars: int,
+) -> str:
+    """The exact prompt string the model is given for one document.
+
+    Extraction and regeneration MUST send the model the same prompt, or a
+    measured "repair rate" would be confounded by a prompt difference rather
+    than reflecting a second attempt at the same task. Both paths call this, so
+    the two cannot drift apart.
+    """
+    document_text = truncate_document_text(doc.text, max_input_chars)
+    system_msg, user_msg = build_extraction_prompt(
+        schema=doc.schema,
+        document_text=document_text,
+        include_schema=include_schema,
+    )
+    return llm.format_chat(system_msg, user_msg)
 
 
 # ============================================================================
@@ -140,6 +197,8 @@ class Extractor:
         top_p: float = 1.0,
         include_schema: bool = True,
         max_input_chars: int = 0,
+        reasoning_token_layers: list[int] | None = None,
+        reasoning_token_cap: int = 0,
     ) -> None:
         if position not in self.SUPPORTED_POSITIONS:
             raise ValueError(
@@ -155,6 +214,14 @@ class Extractor:
         self.top_p = top_p
         self.include_schema = include_schema
         self.max_input_chars = max_input_chars
+        # Layers whose per-token reasoning states we persist for offline
+        # attribution (subset of self.layers). None/empty => feature off.
+        self.reasoning_token_layers = (
+            sorted(set(reasoning_token_layers)) if reasoning_token_layers else []
+        )
+        # Optional cap on how many leading reasoning tokens to store per doc
+        # (0 = no cap). Bounds disk when a trace is very long.
+        self.reasoning_token_cap = max(0, int(reasoning_token_cap))
 
         for ℓ in self.layers:
             if not (1 <= ℓ <= self.llm.num_layers):
@@ -169,14 +236,7 @@ class Extractor:
     # Only necessary because of CUDA OOM Error. Can disable via max_input_chars=0.
     def _truncate_document_text(self, text: str) -> str:
         """Truncate document text. Set max_input_chars=0 in config to disable."""
-        if self.max_input_chars <= 0 or len(text) <= self.max_input_chars:
-            return text
-        truncated = text[: self.max_input_chars]
-        logger.info(
-            "Truncated document text from %d to %d chars (~%d tokens)",
-            len(text), len(truncated), len(truncated) // 4,
-        )
-        return truncated
+        return truncate_document_text(text, self.max_input_chars)
 
     def extract(self, doc: Document) -> ExtractionResult:
         """Run extraction on a single document."""
@@ -199,14 +259,12 @@ class Extractor:
                 captured_layers=list(self.layers),
             )
 
-        document_text = self._truncate_document_text(doc.text)
-
-        system_msg, user_msg = build_extraction_prompt(
-            schema=doc.schema,
-            document_text=document_text,
+        # ------ Build prompt (shared with regeneration; see the helper) ------
+        prompt = build_prompt_for_document(
+            self.llm, doc,
             include_schema=self.include_schema,
+            max_input_chars=self.max_input_chars,
         )
-        prompt = self.llm.format_chat(system_msg, user_msg)
 
         logger.info("Extracting %s (text=%d chars)", doc.doc_id, len(doc.text))
         start = time.perf_counter()
@@ -268,6 +326,28 @@ class Extractor:
             num_generated=len(gen_output.generated_token_ids),
         )
 
+        # ------ Pool the reasoning trace (reasoning models only) ------
+        # The <think>...</think> tokens precede the JSON answer and their
+        # activations are already captured. Pool them into per-layer summary
+        # vectors so downstream probes can fuse reasoning-state with the
+        # answer-token signal. Empty dict for non-reasoning models.
+        reasoning_end = find_reasoning_end_token(per_token_strings)
+        reasoning_acts = reasoning_pooled_vectors(
+            gen_output.hidden_states or {}, reasoning_end,
+        )
+        if reasoning_end > 0:
+            logger.info(
+                "Reasoning trace: %d tokens before </think>; pooled %d layer(s).",
+                reasoning_end, len(reasoning_acts.get("reasoning_mean", {})),
+            )
+
+        # ------ Capture per-token reasoning states (for offline attribution) ---
+        token_states, token_strings = self._capture_reasoning_tokens(
+            hidden_states=gen_output.hidden_states or {},
+            per_token_strings=per_token_strings,
+            reasoning_end=reasoning_end,
+        )
+
         return ExtractionResult(
             doc_id=doc.doc_id,
             domain=doc.domain,
@@ -281,7 +361,40 @@ class Extractor:
             token_logprobs=gen_output.token_logprobs,
             fields=fields,
             captured_layers=list(self.layers),
+            reasoning_activations=reasoning_acts,
+            reasoning_token_states=token_states,
+            reasoning_token_strings=token_strings,
         )
+
+    def _capture_reasoning_tokens(
+        self,
+        *,
+        hidden_states: dict[int, np.ndarray],
+        per_token_strings: list[str],
+        reasoning_end: int,
+    ) -> tuple[dict[int, np.ndarray], list[str]]:
+        """Slice the leading reasoning-trace tokens' hidden states + strings for
+        the configured layer subset. Returns ({}, []) when the feature is off,
+        no </think> was found, or no states were captured."""
+        if not self.reasoning_token_layers or reasoning_end <= 0 or not hidden_states:
+            return {}, []
+        end = reasoning_end
+        if self.reasoning_token_cap > 0:
+            end = min(end, self.reasoning_token_cap)
+        states: dict[int, np.ndarray] = {}
+        for ℓ in self.reasoning_token_layers:
+            arr = hidden_states.get(ℓ)
+            if arr is None or arr.shape[0] == 0:
+                continue
+            e = min(end, arr.shape[0])
+            if e <= 0:
+                continue
+            states[ℓ] = arr[:e].astype(np.float16)
+        if not states:
+            return {}, []
+        # Align strings to the smallest captured length so strings/states match.
+        min_len = min(a.shape[0] for a in states.values())
+        return states, list(per_token_strings[:min_len])
 
     # ------------------------------------------------------------------------
     # Internal: activation slicing

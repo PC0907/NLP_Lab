@@ -255,7 +255,7 @@ def main() -> int:
 
     # ------ Trained baselines (LODO — comparable to the probe's LODO) ------
     # These CAN overfit (they are trained), so they are evaluated under
-    # leave-one-document-out, matching scripts/05_lodo_cv.py. Compare their
+    # leave-one-document-out, matching scripts/extractbench/05_lodo_cv.py. Compare their
     # AUROC to the probe's LODO number (NOT the optimistic full-set AUROC).
     hand_metrics = evaluate_handcrafted(meta=meta, y=y, C=getattr(cfg.probe, "C", 1.0))
     logger.info(

@@ -45,3 +45,9 @@ logs/
 .cache/
 datasets/
 *.bak
+
+# === SOB benchmark (reasoning track) ===
+data/sob/
+*.arrow
+sob_results.tgz
+*.bak.*

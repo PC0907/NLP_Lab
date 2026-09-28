@@ -149,7 +149,7 @@ cd ~/NLP_Lab
 git pull
 
 # 4. Submit job
-sbatch slurm/run_extraction.sh
+sbatch slurm/extractbench/run_extraction.sh
 ```
 
 ### Common mistake: forgetting to pull
@@ -196,10 +196,10 @@ source ~/NLP_Lab/slurm/setup_env.sh     # load modules + activate venv
 cd ~/NLP_Lab
 nvidia-smi                         # log GPU info
 
-python scripts/01_extract.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/02_label.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/03_train_probe.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/04_evaluate.py --config configs/exp_qwen35_4b_pymupdf.yaml
+python scripts/01_extract.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/02_label.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/03_train_probe.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/04_evaluate.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
 ```
 
 ### What `setup_env.sh` does
@@ -213,7 +213,7 @@ export PYTHONPATH=$HOME/NLP_Lab/src:$PYTHONPATH
 
 ### Submitting a job
 ```bash
-sbatch slurm/run_extraction.sh
+sbatch slurm/extractbench/run_extraction.sh
 # Output: Submitted batch job 197701
 ```
 
@@ -346,8 +346,8 @@ python -c "from probe_extraction.config import load_config; print('import OK')"
 
 1. **Create config:**
 ```bash
-cp configs/exp_qwen35_4b_pymupdf.yaml configs/exp_NEW_EXPERIMENT.yaml
-nano configs/exp_NEW_EXPERIMENT.yaml
+cp configs/extractbench/exp_qwen35_4b_pymupdf.yaml configs/extractbench/exp_NEW_EXPERIMENT.yaml
+nano configs/extractbench/exp_NEW_EXPERIMENT.yaml
 # Change: experiment.name, model settings, domain, etc.
 ```
 
@@ -383,10 +383,10 @@ squeue --me
 source ~/NLP_Lab/slurm/setup_env.sh
 cd ~/NLP_Lab
 
-python scripts/01_extract.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/02_label.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/03_train_probe.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/04_evaluate.py --config configs/exp_qwen35_4b_pymupdf.yaml
+python scripts/01_extract.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/02_label.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/03_train_probe.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/04_evaluate.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
 
 echo "=== RESULTS ==="
 cat artifacts/qwen35_4b_pymupdf/results/comparison.json
@@ -395,10 +395,10 @@ cat artifacts/qwen35_4b_pymupdf/results/comparison.json
 **Option B: Extraction separate from analysis** (when iterating on stages 2-4)
 ```bash
 # First: extraction (needs GPU, slow)
-sbatch slurm/run_extraction.sh
+sbatch slurm/extractbench/run_extraction.sh
 
 # After extraction finishes: analysis (no GPU needed, fast)
-sbatch slurm/run_analysis.sh
+sbatch slurm/extractbench/run_analysis.sh
 ```
 
 ### Running analysis only (stages 2-4, no GPU)
@@ -418,9 +418,9 @@ Use `A40devel` partition since analysis is CPU-only and fast:
 source ~/NLP_Lab/slurm/setup_env.sh
 cd ~/NLP_Lab
 
-python scripts/02_label.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/03_train_probe.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/04_evaluate.py --config configs/exp_qwen35_4b_pymupdf.yaml
+python scripts/02_label.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/03_train_probe.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/04_evaluate.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
 
 echo "=== RESULTS ==="
 cat artifacts/qwen35_4b_pymupdf/results/comparison.json
@@ -431,16 +431,16 @@ cat artifacts/qwen35_4b_pymupdf/results/comparison.json
 LODO is CPU-only and runs in seconds. Run directly on the login node:
 ```bash
 cd ~/NLP_Lab
-python scripts/05_lodo_cv.py --config configs/exp_qwen35_4b_pymupdf.yaml
-python scripts/05_lodo_cv.py --config configs/exp_qwen35_4b_swimming.yaml
+python scripts/extractbench/05_lodo_cv.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+python scripts/extractbench/05_lodo_cv.py --config configs/extractbench/exp_qwen35_4b_swimming.yaml
 ```
 
 ### Running a 1-document test
 ```bash
 # Use the test script with --limit 1
-sbatch slurm/test_extraction.sh
+sbatch slurm/extractbench/test_extraction.sh
 # test_extraction.sh should contain:
-# python scripts/01_extract.py --config configs/exp_qwen35_4b_pymupdf.yaml --limit 1
+# python scripts/01_extract.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml --limit 1
 ```
 
 ---
@@ -623,7 +623,7 @@ latest_err() { cat $(ls -t ~/NLP_Lab/logs/*.err 2>/dev/null | head -1); }
 Before submitting any experiment:
 
 - [ ] `git pull` on the cluster (sync with laptop)
-- [ ] Config file exists and has correct settings (`cat configs/exp_*.yaml`)
+- [ ] Config file exists and has correct settings (`cat configs/extractbench/exp_*.yaml`)
 - [ ] Job script references the correct config (`grep config run_*.sh`)
 - [ ] Job script has the right partition and time limit
 - [ ] Job script runs the correct stages (extraction vs analysis)

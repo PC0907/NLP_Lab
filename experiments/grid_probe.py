@@ -69,7 +69,7 @@ def usable_docs(artifact_dir: Path, exclude_domains: list[str]) -> dict[str, dic
 
 
 def run_nested(config: Path, include_file: Path, out_name: str, layers):
-    cmd = [sys.executable, "scripts/05b_nested_lodo.py",
+    cmd = [sys.executable, "scripts/extractbench/05b_nested_lodo.py",
            "--config", str(config),
            "--include-docs-file", str(include_file),
            "--out-name", out_name]
@@ -120,7 +120,7 @@ def main():
 
         results[parser] = {"intersection": inter, "by_domain": by_dom, "models": {}}
         for m in args.models:
-            cfg = Path(f"configs/exp_grid_{m}_{parser}.yaml")
+            cfg = Path(f"configs/extractbench/exp_grid_{m}_{parser}.yaml")
             out_name = f"nested_lodo_grid_{parser}.json"
             logger.info("  running nested LODO: %s", m)
             run_nested(cfg, inc, out_name, args.layers)

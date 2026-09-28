@@ -58,6 +58,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import GroupKFold
 
 sys.path.insert(0, "scripts")
+sys.path.insert(0, "scripts/extractbench")
 nl = import_module("05b_nested_lodo")          # reuse the pipeline's own code
 from probe_extraction.config import load_config
 
@@ -67,8 +68,8 @@ logger = logging.getLogger("transfer_sob")
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--eb-config", default="configs/exp_fresh_alltokens.yaml")
-    p.add_argument("--sob-config", default="configs/exp_qwen35_4b_sob_1k.yaml")
+    p.add_argument("--eb-config", default="configs/extractbench/exp_fresh_alltokens.yaml")
+    p.add_argument("--sob-config", default="configs/extractbench/exp_qwen35_4b_sob_1k.yaml")
     p.add_argument("--layers", type=int, nargs="+", default=[14, 16, 18, 20, 22])
     p.add_argument("--eb-exclude-domains", nargs="*", default=["finance/10kq"],
                    help="Give the flag with no values to include all four domains.")

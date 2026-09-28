@@ -23,7 +23,7 @@ the probe direction is obtained differs.
 
 PROTOCOL
 --------
-Nested LODO, matching scripts/05b_nested_lodo.py: an outer loop holds out a
+Nested LODO, matching scripts/extractbench/05b_nested_lodo.py: an outer loop holds out a
 document; an inner loop selects the layer using only the remaining documents;
 the selected layer is refitted on all non-test documents and scores the held-out
 one. Reported as pooled out-of-fold AUROC over every held-out prediction, plus

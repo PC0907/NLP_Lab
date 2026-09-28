@@ -125,6 +125,30 @@ class LabelingResult:
 # Public entry point
 # ============================================================================
 
+# Documents whose JSON nests deeper than this are degenerate model outputs.
+# Walking them blows Python's recursion limit (and risks a C-stack crash),
+# so we skip them instead of crashing the whole job.
+MAX_JSON_DEPTH = 120
+
+
+def _json_depth(obj: Any) -> int:
+    """Maximum nesting depth of a JSON-like object, computed iteratively so
+    it cannot itself hit the recursion limit."""
+    max_depth = 0
+    stack = [(obj, 1)]
+    while stack:
+        node, d = stack.pop()
+        if d > max_depth:
+            max_depth = d
+        if isinstance(node, dict):
+            for v in node.values():
+                stack.append((v, d + 1))
+        elif isinstance(node, list):
+            for v in node:
+                stack.append((v, d + 1))
+    return max_depth
+
+
 def label_extraction(
     *,
     doc_id: str,
@@ -134,15 +158,23 @@ def label_extraction(
     extracted: dict[str, Any],
     fuzzy_threshold: float = 0.85,
     number_tolerance: float = 0.01,
+    leaf_default: ComparisonStrategy = ComparisonStrategy.EXACT,
+    structure_aware: bool = False,
 ) -> LabelingResult:
     """Convenience function: build a Matcher and label one extraction.
 
     Most callers should use this rather than the Matcher class directly.
+
+    leaf_default / structure_aware are forwarded to Matcher; both default to
+    the original strict behaviour. Set leaf_default=AUTO and
+    structure_aware=True for the tolerant DeepSeek-R1 labeling mode.
     """
     matcher = Matcher(
         schema=schema,
         fuzzy_threshold=fuzzy_threshold,
         number_tolerance=number_tolerance,
+        leaf_default=leaf_default,
+        structure_aware=structure_aware,
     )
     return matcher.label(doc_id=doc_id, domain=domain, gold=gold, extracted=extracted)
 
@@ -182,10 +214,22 @@ class Matcher:
         schema: dict[str, Any],
         fuzzy_threshold: float = 0.85,
         number_tolerance: float = 0.01,
+        leaf_default: ComparisonStrategy = ComparisonStrategy.EXACT,
+        structure_aware: bool = False,
     ) -> None:
         self.schema = schema
         self.fuzzy_threshold = fuzzy_threshold
         self.number_tolerance = number_tolerance
+        # leaf_default: strategy used when the schema declares no
+        #   evaluation_config. EXACT preserves the original strict behaviour;
+        #   AUTO enables type-aware tolerant matching.
+        # structure_aware: when True, a primitive value emitted where gold is
+        #   an object (DeepSeek-R1 emits "B. Boser" where gold is
+        #   {"name": "B. Boser", ...}) is matched against the object's leaf
+        #   values instead of being recorded as a wholesale type_mismatch.
+        #   Both default OFF so existing behaviour and tests are unchanged.
+        self.leaf_default = leaf_default
+        self.structure_aware = structure_aware
 
     # ------------------------------------------------------------------------
     # Public entry
@@ -203,6 +247,22 @@ class Matcher:
         labels: list[FieldLabel] = []
         unmatched_gold: list[list[str | int]] = []
         unmatched_extracted: list[list[str | int]] = []
+
+        # Guard: skip degenerate, pathologically-deep model outputs rather than
+        # crash the whole job on a RecursionError.
+        depth = max(_json_depth(gold), _json_depth(extracted))
+        if depth > MAX_JSON_DEPTH:
+            logger.warning(
+                "Skipping %s: JSON nesting depth %d exceeds MAX_JSON_DEPTH=%d "
+                "(degenerate output); document dropped from labeling.",
+                doc_id, depth, MAX_JSON_DEPTH,
+            )
+            return LabelingResult(
+                doc_id=doc_id, domain=domain, labels=[],
+                n_total=0, n_errors=0, n_hallucinations=0,
+                n_omissions=0, n_value_mismatches=0, n_type_mismatches=0,
+                unmatched_gold_paths=[], unmatched_extracted_paths=[],
+            )
 
         self._walk(
             schema=self.schema,
@@ -323,6 +383,19 @@ class Matcher:
                     _depth=_depth + 1,
                 )
                 return
+            # Structure-aware: a primitive emitted where the other side is an
+            # object (DeepSeek-R1 emits "B. Boser" where gold is
+            # {"name": "B. Boser", ...}). Match the primitive against the
+            # object's leaf values instead of recording a wholesale shape error.
+            if self.structure_aware:
+                dict_side = gold if isinstance(gold, dict) else extracted
+                other_side = extracted if isinstance(gold, dict) else gold
+                if not isinstance(other_side, (dict, list)):
+                    self._emit_structure_relaxed_label(
+                        dict_side=dict_side, other_value=other_side,
+                        gold=gold, extracted=extracted, path=path, labels=labels,
+                    )
+                    return
             # Both present but types disagree → genuine type mismatch.
             self._emit_type_mismatch(
                 path=path, gold=gold, extracted=extracted, labels=labels,
@@ -606,8 +679,8 @@ class Matcher:
         gold_present = _has_content(gold)
         extracted_present = _has_content(extracted)
 
-        # Choose strategy from schema.
-        strategy = self._strategy_for(schema, default=ComparisonStrategy.AUTO)
+        # Choose strategy from schema (falling back to the configured default).
+        strategy = self._strategy_for(schema, default=self.leaf_default)
 
         if not gold_present and not extracted_present:
             # Both empty/null. Correct.
@@ -642,6 +715,49 @@ class Matcher:
                 comparison_strategy=strategy.value,
                 gold_present=gold_present,
                 extracted_present=extracted_present,
+            )
+        )
+
+    def _emit_structure_relaxed_label(
+        self,
+        *,
+        dict_side: dict[str, Any],
+        other_value: Any,
+        gold: Any,
+        extracted: Any,
+        path: list[str | int],
+        labels: list[FieldLabel],
+    ) -> None:
+        """Structure-aware leaf label for a primitive-vs-object mismatch.
+
+        The model emitted a flat value where the schema/gold nests an object
+        (or vice versa). Rather than penalising the schema-shape divergence as
+        a wholesale error, we count the field correct iff the primitive matches
+        ANY leaf value inside the object, under the configured leaf strategy.
+        This is the key fix for the inflated DeepSeek-R1 error rate, where the
+        extracted *value* is right but its *nesting* differs from gold.
+        """
+        strategy = self.leaf_default
+        leaf_values = [v for v in _iter_leaf_values(dict_side) if _has_content(v)]
+        same = any(
+            compare_values(
+                v, other_value, strategy=strategy,
+                fuzzy_threshold=self.fuzzy_threshold,
+                number_tolerance=self.number_tolerance,
+            )
+            for v in leaf_values
+        )
+        labels.append(
+            FieldLabel(
+                path=list(path),
+                path_str=_path_to_string(path),
+                gold_value=gold,
+                extracted_value=extracted,
+                is_error=0 if same else 1,
+                error_type="match" if same else "value_mismatch",
+                comparison_strategy=f"structaware_{strategy.value}",
+                gold_present=_has_content(gold),
+                extracted_present=_has_content(extracted),
             )
         )
 
@@ -706,6 +822,22 @@ def _has_content(v: Any) -> bool:
     if isinstance(v, (list, dict)) and len(v) == 0:
         return False
     return True
+
+def _iter_leaf_values(obj: Any):
+    """Yield every primitive leaf value inside a nested dict/list structure.
+
+    Used by structure-aware matching to test whether a flat extracted value
+    appears anywhere inside a gold object (regardless of nesting/key names).
+    """
+    if isinstance(obj, dict):
+        for v in obj.values():
+            yield from _iter_leaf_values(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _iter_leaf_values(v)
+    else:
+        yield obj
+
 
 def _make_empty_like(template: Any) -> Any:
     """Return an empty container matching the type of `template`.

@@ -13,7 +13,7 @@ RED   -> same schema-key wall as Llama; needs a normalized/value-based matcher
 Runs ONE document. Single forward pass. Needs GPU.
 
 Usage:
-  python tools/smoke_test_gemma.py --config configs/exp_gemma3_12b_pooled.yaml --doc-index 0
+  python tools/smoke_test_gemma.py --config configs/extractbench/exp_gemma3_12b_pooled.yaml --doc-index 0
 """
 from __future__ import annotations
 import argparse, json, sys

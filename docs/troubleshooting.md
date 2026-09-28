@@ -160,7 +160,7 @@ And the job script sources it:
 # ... other SBATCH directives ...
 source ~/NLP_Lab/slurm/setup_env.sh
 cd ~/NLP_Lab
-python scripts/01_extract.py --config configs/exp_qwen35_4b_pymupdf.yaml
+python scripts/01_extract.py --config configs/extractbench/exp_qwen35_4b_pymupdf.yaml
 ```
 
 ---
@@ -346,7 +346,7 @@ Where layer 1 = first transformer block output, layer 32 = last transformer bloc
 
 **Symptom:**
 ```
-FileNotFoundError: Config file not found: configs/exp_qwen35_4b_pymupdf.yaml
+FileNotFoundError: Config file not found: configs/extractbench/exp_qwen35_4b_pymupdf.yaml
 ```
 
 **Root cause:** The config file was created locally but never pushed to the cluster via git.
@@ -354,7 +354,7 @@ FileNotFoundError: Config file not found: configs/exp_qwen35_4b_pymupdf.yaml
 **Fix:**
 ```bash
 # On laptop:
-git add configs/exp_qwen35_4b_pymupdf.yaml
+git add configs/extractbench/exp_qwen35_4b_pymupdf.yaml
 git commit -m "Add experiment config"
 git push
 

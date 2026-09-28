@@ -1,6 +1,6 @@
 # Experiments
 
-Follow-up studies built on top of the main pipeline in [`scripts/`](../scripts/). Each script reads cached artifacts
+ExtractBench-track follow-up studies built on top of the shared pipeline in [`scripts/`](../scripts/). Each script reads cached artifacts
 produced by stages 01–02 and writes results under `artifacts/<experiment>/results/`. Run them from the repo root:
 
 ```bash

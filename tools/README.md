@@ -1,6 +1,6 @@
 # Tools
 
-Diagnostics, dataset checks and model smoke tests. None of these produce reported results; they exist to validate
+Diagnostics, dataset checks and model smoke tests, written for the ExtractBench track. None of these produce reported results; they exist to validate
 inputs and catch failures before spending GPU time. Run from the repo root.
 
 ## Dataset and label checks

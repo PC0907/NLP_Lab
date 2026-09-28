@@ -16,7 +16,7 @@ Plus the usual gate:
 Runs ONE document. Needs GPU.
 
 Usage:
-  python tools/smoke_test_r1.py --config configs/exp_r1qwen7b_pooled.yaml --doc-index 0
+  python tools/smoke_test_r1.py --config configs/extractbench/exp_r1qwen7b_pooled.yaml --doc-index 0
 """
 from __future__ import annotations
 import argparse, json, re, sys

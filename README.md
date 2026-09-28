@@ -11,71 +11,94 @@ Linear probes on LLM hidden states that flag **which extracted fields are likely
 
 ## Motivation
 
-LLMs are widely used to turn documents (papers, invoices, contracts, financial filings) into structured JSON. Errors in
-that output are silent: a hallucinated or mismatched field looks exactly as plausible as a correct one. Regenerating
-everything is expensive; regenerating nothing leaves the errors in.
+LLMs are widely used to turn documents (papers, invoices, contracts, financial filings, multi-hop QA passages) into
+structured JSON. Errors in that output are silent: a hallucinated or mismatched field looks exactly as plausible as a
+correct one. Regenerating everything is expensive; regenerating nothing leaves the errors in.
 
 > **Research question.** Can probe-based trust signals identify risky extracted fields well enough to improve the
 > cost–quality trade-off of selective regeneration, compared to black-box baselines such as token log-probabilities,
 > P(True) and self-consistency?
 
-The probe is a means, not the end. The headline artefact is a cost–quality curve: extraction accuracy vs. compute
-spent on regeneration, for probe-guided selection versus the baselines.
-
 ## Method
 
 ```mermaid
 flowchart LR
-    A["PDF / text document"] --> B["LLM extraction<br/>JSON per schema"]
+    A["Document"] --> B["LLM extraction<br/>JSON per schema"]
     B --> C["Capture hidden states<br/>per generated field"]
     B --> D["Match against gold<br/>per-field labels"]
     C --> E["Linear probe<br/>P(field is wrong)"]
     D --> E
-    E --> F["Evaluate vs. baselines<br/>AUROC · nested LODO"]
-    E --> G["Selective regeneration<br/>+ safe override"]
-    G --> H["Cost–quality curve"]
+    E --> F["Evaluate vs. baselines<br/>AUROC · nested CV"]
+    E --> G["Selective regeneration"]
+    G --> H["Cost–quality trade-off"]
 ```
 
 1. **Extract.** Run an open-weights LLM over benchmark documents with the target JSON schema in the prompt.
-2. **Label.** Compare each extracted field to gold annotations (match, value mismatch, hallucination, omission, type
-   mismatch) with a schema-aware matcher.
-3. **Capture.** Record hidden states at the tokens that produced each field, across a sweep of layers and token
-   positions (last token, mean, all tokens).
+2. **Label.** Compare each extracted field to gold annotations with a schema-aware matcher (match, value mismatch,
+   hallucination, omission, type mismatch).
+3. **Capture.** Record hidden states at the tokens that produced each field, and for reasoning models, over the
+   `<think>` trace.
 4. **Probe.** Train logistic-regression probes to predict per-field errors.
-5. **Evaluate.** Compare against black-box baselines under *nested leave-one-document-out* CV, so that layer selection
-   never sees the held-out document.
-6. **Regenerate.** Use probe risk scores to choose which fields to re-extract, with a safe-override policy that only
-   replaces a value when the probe is confident the new value is better.
+5. **Evaluate.** Compare against black-box baselines under document-level cross-validation, so that no probe is
+   scored on a document it was trained on.
+6. **Regenerate.** Re-extract the fields the probe flags and measure what actually gets repaired or damaged.
 
-Follow-up analyses cover cross-model and cross-dataset transfer, parser sensitivity (PyMuPDF / Docling / Camelot),
-mass-mean vs. logistic probes, and activation steering along the probe direction to test causal involvement.
+## Research tracks
 
-**Models studied:** Qwen3.5 (2B / 4B / 9B), Gemma 3 (4B / 12B), Llama 3.1 8B, DeepSeek-R1-Distill-Qwen-7B.
-**Data:** ExtractBench, RealKIE, an insurance-claims set, and SOB (Structured Output Benchmark).
+The project has two tracks that share the library (`src/probe_extraction/`) and pipeline stages 01–04, and each add
+their own stages 05–10.
+
+| | **ExtractBench track** | **Reasoning-trace track** |
+|---|---|---|
+| Lead | Syed Ali Mehdi Rizvi | Adnan Bhat |
+| Question | Do answer-token probes beat black-box signals on real PDF extraction, and does probe-guided regeneration pay off? | Does a reasoning model's chain of thought carry error information beyond the answer token, and what is acting on it worth? |
+| Models | Qwen3.5 (2B / 4B / 9B), Gemma 3 (4B / 12B), Llama 3.1 8B | DeepSeek-R1-Distill-Qwen-7B |
+| Data | ExtractBench (PDFs), RealKIE, insurance claims; transfer to SOB | SOB (Structured Output Benchmark), HotpotQA multi-hop subset |
+| Scripts | [`scripts/extractbench/`](scripts/extractbench/), [`experiments/`](experiments/), [`tools/`](tools/) | [`scripts/reasoning/`](scripts/reasoning/) |
+| Configs | [`configs/extractbench/`](configs/extractbench/) | [`configs/reasoning/`](configs/reasoning/) |
+| Jobs | [`slurm/extractbench/`](slurm/extractbench/) | [`slurm/reasoning/`](slurm/reasoning/) |
+| Docs | [`docs/extractbench/`](docs/extractbench/) | [`docs/reasoning/`](docs/reasoning/): start with [PROJECT_OVERVIEW](docs/reasoning/PROJECT_OVERVIEW.md) |
+
+**Reasoning-trace track highlights** (974 SOB documents; details and caveats in
+[PROJECT_OVERVIEW](docs/reasoning/PROJECT_OVERVIEW.md)):
+
+- Probing the `<think>` trace beats the model's own token confidence: AUROC **0.827** vs **0.753**.
+- Regeneration was actually run and measured rather than simulated: the measured repair rate is **0.233**, against
+  the 0.700 a simulated cost model assumed.
+- Requiring the model to agree with itself lifts the repair-to-damage ratio from **0.9** to **4.8**.
+
+**ExtractBench track** results are being finalised; the dated research log is in
+[`docs/extractbench/`](docs/extractbench/).
 
 ## Repository layout
 
 ```
 .
-├── src/probe_extraction/   # Installable library
-│   ├── data/               #   benchmark loaders (ExtractBench, RealKIE, SOB, insurance) + PDF parsing
-│   ├── models/             #   Hugging Face model wrapper with activation capture
-│   ├── extraction/         #   prompting, generation, JSON parsing, field→token alignment
+├── src/probe_extraction/   # Shared library
+│   ├── data/               #   loaders: ExtractBench, RealKIE, SOB, insurance claims; PDF parsing
+│   ├── models/             #   Hugging Face wrapper with activation capture
+│   ├── extraction/         #   prompting, generation, JSON parsing, field→token alignment, reasoning traces
 │   ├── labeling/           #   schema-aware gold matcher and value comparison
 │   ├── probes/             #   linear probes
-│   └── baselines/          #   log-prob, hand-crafted and combined baselines, LODO evaluation
-├── scripts/                # Main pipeline, numbered by stage (00 → 10)
-├── experiments/            # Follow-up studies: transfer, steering, grid, mass-mean, …
-├── tools/                  # Diagnostics, dataset checks and model smoke tests
-├── configs/                # One YAML per experiment (model × dataset × parser × pooling)
-├── slurm/                  # SLURM job scripts and cluster environment setup
-├── tests/                  # Unit tests (matcher, value comparison, benchmark loader)
-└── docs/                   # HPC guide, troubleshooting, research notes
+│   ├── baselines/          #   log-prob, hand-crafted and combined baselines, LODO evaluation
+│   ├── regen/              #   measured-regeneration accounting
+│   └── utils/
+├── scripts/                # Shared stages 00–04 (download, extract, label, train, evaluate)
+│   ├── extractbench/       #   ExtractBench track stages 05–10 and analyses
+│   └── reasoning/          #   Reasoning track stages 05–10
+├── experiments/            # ExtractBench follow-ups: transfer, steering, parser grid, mass-mean, …
+├── tools/                  # Diagnostics, dataset checks, model smoke tests
+├── configs/                # default.yaml + one folder of experiment YAMLs per track
+├── slurm/                  # Shared env setup + one folder of SLURM jobs per track
+├── figures/                # Paper figures (reasoning track)
+├── archive/reasoning/      # Superseded reasoning-track stages, kept so earlier results stay reproducible
+├── tests/                  # Unit tests for both tracks
+└── docs/                   # HPC guide, troubleshooting, per-track documentation and research logs
 ```
 
 ## Installation
 
-Requires Python 3.10+ and, for extraction, a CUDA GPU (developed on A40/A100; the 4B models fit in bf16 on 16 GB).
+Requires Python 3.10+ and, for extraction, a CUDA GPU (developed on A40/A100).
 
 ```bash
 git clone https://github.com/PC0907/NLP_Lab.git
@@ -92,65 +115,64 @@ git-ignored):
 HF_TOKEN=hf_...
 ```
 
-Download [ExtractBench](https://github.com/ContextualAI/extract-bench) into `data/extract-bench/` (or set
-`EXTRACT_BENCH_PATH`). SOB can be fetched with `python scripts/00_download_sob.py`.
+Data:
+
+- **ExtractBench:** clone [ContextualAI/extract-bench](https://github.com/ContextualAI/extract-bench) into
+  `data/extract-bench/`, or set `EXTRACT_BENCH_PATH`.
+- **SOB:** `python scripts/00_download_sob.py`.
 
 ## Quick start
 
 Every stage takes the same config file. Outputs go to `artifacts/<experiment.name>/`.
 
-```bash
-CFG=configs/exp_qwen35_4b_pymupdf.yaml
+**ExtractBench track**
 
-python scripts/01_extract.py     --config $CFG   # GPU: extractions + activations
-python scripts/02_label.py       --config $CFG   # per-field correctness labels
-python scripts/03_train_probe.py --config $CFG   # probes per layer
-python scripts/04_evaluate.py    --config $CFG   # probe vs. baselines
-python scripts/05b_nested_lodo.py --config $CFG  # nested LODO (reported metric)
+```bash
+CFG=configs/extractbench/exp_qwen35_4b_pymupdf.yaml
+
+python scripts/01_extract.py     --config $CFG    # GPU: extractions + activations
+python scripts/02_label.py       --config $CFG    # per-field correctness labels
+python scripts/03_train_probe.py --config $CFG    # probes per layer
+python scripts/04_evaluate.py    --config $CFG    # probe vs. baselines
+python scripts/extractbench/05b_nested_lodo.py --config $CFG   # nested LODO (reported metric)
 ```
 
-Stages 2 onward run on CPU from cached artifacts.
+**Reasoning-trace track**
 
-### Pipeline stages
+```bash
+CFG=configs/reasoning/exp_deepseek_r1_7b_sob_attr_1k.yaml
 
-| Script | Purpose |
-|---|---|
-| `00_download_sob.py` | Download the SOB dataset |
-| `01_extract.py` | Run the LLM; save extractions, token log-probs and activations |
-| `02_label.py` | Label each extracted field against gold |
-| `03_train_probe.py` | Train linear probes per layer |
-| `04_evaluate.py` | Probe vs. baselines (AUROC / AUPRC) |
-| `05_lodo_cv.py` | Leave-one-document-out CV |
-| `05b_nested_lodo.py` | Nested LODO with inner-loop layer selection; reports pooled out-of-fold AUROC |
-| `05c_nested_groupkfold.py` | Nested grouped K-fold for many small records (SOB) |
-| `06_span_aggregation.py` | Last-token vs. mean vs. span-max field representations |
-| `07_regen_single.py` | Single-field regeneration sanity check |
-| `08_fixability_filter.py` | Is the gold value present in the parsed text at all? |
-| `09_regen_sweep.py` | Selective regeneration cost–quality sweep |
-| `10_gpu_baselines.py` | P(True) and self-consistency baselines |
-| `10_regen_select.py` | Multi-sample regeneration with probe-based selection and safe override |
+python scripts/01_extract.py --config $CFG --resume          # GPU: extraction + reasoning-trace states
+python scripts/02_label.py   --config $CFG
+python scripts/reasoning/05_reasoning_attribution_lodo.py --config $CFG
+# … stages 06–10; see docs/reasoning/REASONING_TRACK.md for the full sequence and flags
+```
 
-See [`experiments/README.md`](experiments/README.md) and [`tools/README.md`](tools/README.md) for the rest.
+Stages after extraction run on CPU from cached artifacts.
 
 ## Running on a SLURM cluster
 
 All experiments were run with the job scripts in [`slurm/`](slurm/). Submit them from the repo root:
 
 ```bash
-sbatch slurm/run_extraction.sh
+sbatch slurm/extractbench/run_extraction.sh
 ```
 
 [`docs/hpc.md`](docs/hpc.md) covers cluster setup and [`docs/troubleshooting.md`](docs/troubleshooting.md) collects
 known failure modes and fixes.
 
-## Evaluation protocol
+## Labeling modes
 
-- **Nested leave-one-document-out.** The outer loop holds out one document. The inner loop picks the probe layer (and
-  regeneration threshold) using only the remaining documents.
-- **Pooled out-of-fold AUROC** is the reported metric. Every field is scored by a probe that never saw its document,
-  and AUROC is computed once over all held-out fields. Per-fold means are also logged, but they are unstable when
-  single documents have few fields.
-- **Strict and lenient matchers** are both reported for regeneration outcomes (fields fixed, fields broken, net).
+`labeling.match_mode` in the config controls how extracted values are compared to gold:
+
+| Mode | Leaf comparison | Used by |
+|---|---|---|
+| `strict` | Exact | — |
+| `auto` (default) | Type-aware: numeric tolerance, date parsing, case-insensitive text | ExtractBench track |
+| `structure_aware` | As `auto`, plus flat values matched against gold object leaves | Reasoning track |
+
+`02_label.py` saves labels for the configured mode and writes an error-rate comparison across all three to
+`labels/_definition_comparison.json`.
 
 ## Tests
 
@@ -158,12 +180,12 @@ known failure modes and fixes.
 pytest
 ```
 
-Loader tests that need ExtractBench are skipped automatically when `data/extract-bench/` is absent.
+Tests that need ExtractBench are skipped automatically when `data/extract-bench/` is absent.
 
-## Status
+## Authors
 
-Active research project. Results and the write-up are being finalised; the dated research log is in
-[`docs/notes/`](docs/notes/).
+- **Syed Ali Mehdi Rizvi** ([@PC0907](https://github.com/PC0907)): ExtractBench track
+- **Adnan Bhat** ([@Adnanilahi](https://github.com/Adnanilahi)): reasoning-trace track
 
 ## Citation
 
@@ -171,4 +193,4 @@ If you use this code, please cite it using the metadata in [`CITATION.cff`](CITA
 
 ## License
 
-[MIT](LICENSE) © 2026 Syed Ali Mehdi Rizvi
+[MIT](LICENSE)

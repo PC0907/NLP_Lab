@@ -20,8 +20,8 @@ Both datasets scored at the SAME layer (must match). CPU only.
 
 Usage (as a job):
   python experiments/transfer_probe.py \\
-     --train-config configs/exp_qwen35_4b_pooled_alltokens.yaml \\
-     --test-config  configs/exp_qwen35_4b_insurance.yaml \\
+     --train-config configs/extractbench/exp_qwen35_4b_pooled_alltokens.yaml \\
+     --test-config  configs/extractbench/exp_qwen35_4b_insurance.yaml \\
      --layer 16 --train-exclude-domains finance/10kq
 """
 from __future__ import annotations

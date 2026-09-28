@@ -12,7 +12,7 @@ RED   keys diverge-> same schema-key problem as Llama; insurance -> future work.
 Runs ONE document. Loads the model (needs a GPU), single forward pass.
 
 Usage:
-    python tools/smoke_test_insurance.py --config configs/exp_qwen35_4b_pooled.yaml
+    python tools/smoke_test_insurance.py --config configs/extractbench/exp_qwen35_4b_pooled.yaml
 """
 from __future__ import annotations
 

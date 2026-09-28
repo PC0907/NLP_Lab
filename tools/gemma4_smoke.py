@@ -17,7 +17,7 @@ Uses the parsed-text cache via the benchmark loader, so the input text is
 identical to what Qwen saw.
 
 Usage:
-  python tools/gemma4_smoke.py --config configs/exp_fresh_alltokens.yaml --doc-index 24
+  python tools/gemma4_smoke.py --config configs/extractbench/exp_fresh_alltokens.yaml --doc-index 24
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ sys.path.insert(0, "scripts")
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--config", default="configs/exp_fresh_alltokens.yaml")
+    p.add_argument("--config", default="configs/extractbench/exp_fresh_alltokens.yaml")
     p.add_argument("--model", default="google/gemma-4-E4B")
     p.add_argument("--doc-index", type=int, default=24,
                    help="24 = swimming table2: short, and Qwen extracts it well.")
